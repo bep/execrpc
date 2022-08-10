@@ -63,7 +63,10 @@ type Client struct {
 }
 
 func (c *Client) Close() error {
-	return c.conn.Close()
+	if err := c.conn.Close(); err != nil {
+		return c.addErrContext("close", err)
+	}
+	return nil
 }
 
 // Execute sends body to the server and returns the Message it receives.
@@ -80,7 +83,15 @@ func (c *Client) Execute(body []byte) (Message, error) {
 		return Message{}, errors.New("timeout waiting for the server to respond")
 	}
 
-	return call.Response, call.Error
+	if call.Error != nil {
+		return call.Response, c.addErrContext("execute", call.Error)
+	}
+
+	return call.Response, nil
+}
+
+func (c *Client) addErrContext(op string, err error) error {
+	return fmt.Errorf("%s: %s %s", op, err, c.conn.stdErr.String())
 }
 
 func (c *Client) newCall(body []byte) (*call, error) {

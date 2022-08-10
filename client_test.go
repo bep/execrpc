@@ -12,7 +12,7 @@ func TestExec(t *testing.T) {
 		ClientOptions{
 			Version: 1,
 			Cmd:     "go",
-			Args:    []string{"run", "./examples/server"},
+			Args:    []string{"run", "./examples/servers/raw"},
 		})
 	defer func() {
 		c.Assert(client.Close(), qt.IsNil)

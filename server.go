@@ -18,18 +18,18 @@ func NewServer(opts ServerOptions) *Server {
 	}
 
 	return &Server{
-		Call: opts.Call,
-		In:   opts.In,
-		Out:  opts.Out,
+		call: opts.Call,
+		in:   opts.In,
+		out:  opts.Out,
 	}
 }
 
 type Server struct {
-	Call func(message Message) Message
+	call func(message Message) Message
 	//Decode func(message Message) (T, error)
 
-	In  io.Reader
-	Out io.Writer
+	in  io.Reader
+	out io.Writer
 
 	g *errgroup.Group
 }
@@ -53,16 +53,16 @@ func (s *Server) readInOut() error {
 	var err error
 	for err == nil {
 		var header Header
-		if err = header.Read(s.In); err != nil {
+		if err = header.Read(s.in); err != nil {
 			break
 		}
 		body := make([]byte, header.Size)
-		_, err = io.ReadFull(s.In, body)
+		_, err = io.ReadFull(s.in, body)
 		if err != nil {
 			break
 		}
 
-		response := s.Call(
+		response := s.call(
 			Message{
 				Header: header,
 				Body:   body,
@@ -70,7 +70,7 @@ func (s *Server) readInOut() error {
 		)
 		response.Header.Size = uint32(len(response.Body))
 
-		if err = response.Write(s.Out); err != nil {
+		if err = response.Write(s.out); err != nil {
 			break
 		}
 	}

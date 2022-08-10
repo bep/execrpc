@@ -1,4 +1,4 @@
-module github.com/bep/execrpc/examples/server
+module github.com/bep/execrpc/examples/servers/raw
 
 go 1.19
 

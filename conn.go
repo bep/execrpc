@@ -1,7 +1,6 @@
 package execrpc
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -25,16 +24,14 @@ func newConn(cmd *exec.Cmd) (_ conn, err error) {
 
 	out, err := cmd.StdoutPipe()
 	stdErr := &tailBuffer{limit: 1024}
-	buff := bufio.NewReader(out)
-	c := conn{buff, out, in, stdErr, cmd}
+	c := conn{out, in, stdErr, cmd}
 	cmd.Stderr = c.stdErr
 
 	return c, err
 }
 
 type conn struct {
-	io.Reader
-	readerCloser io.Closer
+	io.ReadCloser
 	io.WriteCloser
 	stdErr *tailBuffer
 	cmd    *exec.Cmd
@@ -43,7 +40,7 @@ type conn struct {
 // Close closes conn's WriteCloser, ReadClosers, and waits for the command to finish.
 func (c conn) Close() error {
 	writeErr := c.WriteCloser.Close()
-	readErr := c.readerCloser.Close()
+	readErr := c.ReadCloser.Close()
 	cmdErr := c.waitWithTimeout()
 
 	if writeErr != nil {
