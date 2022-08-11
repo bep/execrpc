@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bep/execrpc/codecs"
+	"github.com/bep/helpers/envhelpers"
 )
 
 // ErrShutdown will be returned from Execute and Close if the client is or
@@ -37,8 +38,10 @@ type Client[Q, R any] struct {
 	codec     codecs.Codec[Q, R]
 }
 
-func (c *Client[Q, R]) Execute(req Q) (R, error) {
-	body, err := c.codec.Encode(req)
+// Execute encodes and sends r the server and returns the response object.
+// It's safe to call Execute from multiple goroutines.
+func (c *Client[Q, R]) Execute(r Q) (R, error) {
+	body, err := c.codec.Encode(r)
 	var resp R
 	if err != nil {
 		return resp, err
@@ -47,6 +50,12 @@ func (c *Client[Q, R]) Execute(req Q) (R, error) {
 	if err != nil {
 		return resp, err
 	}
+
+	if message.Header.Status > MessageStatusOK && message.Header.Status <= MessageStatusSystemReservedMax {
+		// All of these are currently error situations produced by the server.
+		return resp, fmt.Errorf("%s (error code %d)", message.Body, message.Header.Status)
+	}
+
 	err = c.codec.Decode(message.Body, &resp)
 	if err != nil {
 		return resp, err
@@ -65,6 +74,16 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 
 	cmd := exec.Command(opts.Cmd, opts.Args...)
 	cmd.Stderr = os.Stderr
+	env := os.Environ()
+	var keyVals []string
+	for _, env := range opts.Env {
+		key, val := envhelpers.SplitEnvVar(env)
+		keyVals = append(keyVals, key, val)
+	}
+	if len(keyVals) > 0 {
+		envhelpers.SetEnvVars(&env, keyVals...)
+	}
+	cmd.Env = env
 
 	conn, err := newConn(cmd)
 	if err != nil {
@@ -123,7 +142,7 @@ func (c *ClientRaw) Execute(body []byte) (Message, error) {
 	select {
 	case call = <-call.Done:
 	case <-time.After(c.timeout):
-		return Message{}, errors.New("timeout waiting for the server to respond")
+		return Message{}, errors.New("timeout waiting for the server to respond; check that you're not writing anything to stdout inside the server")
 	}
 
 	if call.Error != nil {
@@ -211,6 +230,7 @@ func (c *ClientRaw) input() {
 		call.Error = err
 		call.done()
 	}
+
 }
 
 func (c *ClientRaw) send(call *call) error {
@@ -239,6 +259,12 @@ type ClientRawOptions struct {
 
 	// The arguments to pass to the command.
 	Args []string
+
+	// Environment variables to pass to the command.
+	// These will be merged with the environment variables of the current process,
+	// vallues in this slice have precedence.
+	// A slice of strings of the form "key=value"
+	Env []string
 
 	// The timeout for the client.
 	Timeout time.Duration

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -11,15 +10,32 @@ import (
 )
 
 func main() {
+	log.SetFlags(0)
+	log.SetPrefix("typed-example: ")
+
+	codecID := os.Getenv("EXECRPC_CODEC")
+	if codecID == "" {
+		codecID = "json"
+	}
+
+	// Note that it's not possible to print anything to stdout.
+	// Use stdout for logging.
+	log.Printf("Starting server using codec %s", codecID)
+
+	var codec codecs.Codec[model.ExampleResponse, model.ExampleRequest]
+	switch codecID {
+	case "toml":
+		codec = codecs.TOMLCodec[model.ExampleResponse, model.ExampleRequest]{}
+	case "gob":
+		codec = codecs.GobCodec[model.ExampleResponse, model.ExampleRequest]{}
+	default:
+		codec = codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{}
+	}
+
 	server, err := execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
-			Codec: codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{},
+			Codec: codec,
 			Call: func(req model.ExampleRequest) model.ExampleResponse {
-				if req.Text == "stdout" {
-					// Make sure that the server doesn't hang when writing to os.Stdout.
-					fmt.Fprintln(os.Stdout, "write some text to stdout, this should end up in stderr")
-				}
-
 				if req.Text == "fail" {
 					return model.ExampleResponse{
 						Error: &model.Error{Msg: "failed to echo"},
@@ -40,6 +56,7 @@ func main() {
 		handleErr(err)
 	}
 	_ = server.Wait()
+
 }
 
 func handleErr(err error) {

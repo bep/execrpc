@@ -9,41 +9,36 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	MessageStatusOK = iota
+	MessageStatusErrDecodeFailed
+	MessageStatusErrEncodeFailed
+
+	// MessageStatusSystemReservedMax is the maximum value for a system reserved status code.
+	MessageStatusSystemReservedMax = 100
+)
+
+// NewServerRaw creates a new Server. using the given options.
+// Note that we're passing message via stdin and stdout,
+// so it's not possible to print anything to stdout inside a server (that will time out).
+// Use stderr for loigging (e.gl via fmt.Printf). TODO(bep) fix this.
 func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
 	}
 
-	origStdout := os.Stdout
-	done := make(chan bool)
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-
-	// Prevent server implementations from freezing the server when writing to stdout (this will happen).
-	os.Stdout = w
-
-	go func() {
-		// Copy all output from the pipe to stderr
-		_, _ = io.Copy(os.Stderr, r)
-		done <- true
-
-	}()
-
 	return &ServerRaw{
 		call: opts.Call,
-		onStop: func() {
-			// Close one side of the pipe.
-			_ = w.Close()
-			<-done
-		},
-		in:  os.Stdin,
-		out: origStdout,
+		in:   os.Stdin,
+		out:  os.Stdout,
 	}, nil
 }
 
+// NewServer creates a new Server. using the given options.
+// Note that we're passing message via stdin and stdout,
+// so it's not possible to print anything to stdout inside a server (that will time out).
+// Use stderr for loigging (e.gl via fmt.Printf).  TODO(bep) fix this.
+// Also, you must make sure to use the same codec as the client.
 func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
@@ -56,12 +51,23 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		var q Q
 		err := opts.Codec.Decode(message.Body, &q)
 		if err != nil {
-			return Message{}, fmt.Errorf("failed to decode request: %s", err)
+			m := Message{
+				Header: message.Header,
+				Body:   []byte(fmt.Sprintf("failed to decode request: %s. Check that client and server uses the same codec.", err)),
+			}
+			m.Header.Status = MessageStatusErrDecodeFailed
+			return m, nil
 		}
 		r := opts.Call(q)
 		b, err := opts.Codec.Encode(r)
 		if err != nil {
-			return Message{}, fmt.Errorf("failed to encode response: %s", err)
+
+			m := Message{
+				Header: message.Header,
+				Body:   []byte(fmt.Sprintf("failed to encode response: %s. Check that client and server uses the same codec.", err)),
+			}
+			m.Header.Status = MessageStatusErrEncodeFailed
+			return m, nil
 		}
 		return Message{
 			Header: message.Header,
@@ -98,8 +104,6 @@ type Server[Q, R any] struct {
 type ServerRaw struct {
 	call func(Message) (Message, error)
 
-	onStop func()
-
 	in  io.Reader
 	out io.Writer
 
@@ -119,10 +123,6 @@ func (s *ServerRaw) Start() error {
 
 func (s *ServerRaw) Wait() error {
 	err := s.g.Wait()
-	if s.onStop != nil {
-		s.onStop()
-	}
-
 	return err
 }
 
@@ -161,6 +161,7 @@ func (s *ServerRaw) readInOut() error {
 		if err = response.Write(s.out); err != nil {
 			break
 		}
+
 	}
 
 	return err

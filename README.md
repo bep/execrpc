@@ -21,7 +21,14 @@ client, err := execrpc.StartClient(
 result, _ := client.Execute(model.ExampleRequest{Text: "world"})
 
 fmt.Println(result.Hello)
+
+//...
+
+client.Close()
+
 ```
+
+To get the best performance you should keep the client open as long as its needed – and store it as a shared object; it's safe and encouraged to call `Execute` from multiple goroutines.
 
 And the server side of the above:
 
@@ -43,3 +50,26 @@ func main() {
 	_ = server.Wait()
 }
 ```
+
+Of the included codecs, JSON seems to win by a small margin (but only tested with small requests/responses):
+
+```bsh
+name            time/op
+Client/JSON-10  4.89µs ± 0%
+Client/TOML-10  5.51µs ± 0%
+Client/Gob-10   17.0µs ± 0%
+
+name            alloc/op
+Client/JSON-10    922B ± 0%
+Client/TOML-10  1.67kB ± 0%
+Client/Gob-10   9.22kB ± 0%
+
+name            allocs/op
+Client/JSON-10    19.0 ± 0%
+Client/TOML-10    28.0 ± 0%
+Client/Gob-10      227 ± 0%
+```
+
+## Status Codes
+
+The status codes in the header between 1 and 100 are reserved for the system. This will typically be used to catch decoding/encoding errors on the server.

@@ -2,6 +2,7 @@ package codecs
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 
 	"github.com/pelletier/go-toml/v2"
@@ -38,4 +39,22 @@ func (c JSONCodec[Q, R]) Decode(b []byte, r *R) error {
 
 func (c JSONCodec[Q, R]) Encode(q Q) ([]byte, error) {
 	return json.Marshal(q)
+}
+
+// GobCodec is a Codec that uses gob as the underlying format.
+type GobCodec[Q, R any] struct{}
+
+func (c GobCodec[Q, R]) Decode(b []byte, r *R) error {
+	dec := gob.NewDecoder(bytes.NewReader(b))
+	return dec.Decode(r)
+}
+
+func (c GobCodec[Q, R]) Encode(q Q) ([]byte, error) {
+	var b bytes.Buffer
+	enc := gob.NewEncoder(&b)
+	err := enc.Encode(q)
+	if err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
