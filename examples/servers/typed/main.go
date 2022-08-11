@@ -16,6 +16,11 @@ func main() {
 			Out:   os.Stdout,
 			Codec: codecs.JSONCodec[model.ExampelResponse, model.ExampleRequest]{},
 			Call: func(req model.ExampleRequest) model.ExampelResponse {
+				if req.Text == "fail" {
+					return model.ExampelResponse{
+						Error: &model.Error{Msg: "failed to echo"},
+					}
+				}
 				return model.ExampelResponse{
 					Hello: "Hello " + req.Text + "!",
 				}
@@ -34,6 +39,6 @@ func main() {
 }
 
 func handleErr(err error) {
-	log.Fatalf("error: failed to start echo server: %s", err)
+	log.Fatalf("error: failed to start typed echo server: %s", err)
 
 }

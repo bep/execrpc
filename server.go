@@ -34,21 +34,21 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		return nil, fmt.Errorf("opts: Codec is required")
 	}
 
-	call := func(message Message) Message {
+	call := func(message Message) (Message, error) {
 		var q Q
 		err := opts.Codec.Decode(message.Body, &q)
 		if err != nil {
-			panic("TODO(bep)")
+			return Message{}, fmt.Errorf("failed to decode request: %s", err)
 		}
 		r := opts.Call(q)
 		b, err := opts.Codec.Encode(r)
 		if err != nil {
-			panic("TODO(bep)")
+			return Message{}, fmt.Errorf("failed to encode response: %s", err)
 		}
 		return Message{
 			Header: message.Header,
 			Body:   b,
-		}
+		}, nil
 	}
 
 	rawServer, err := NewServerRaw(
@@ -82,7 +82,7 @@ type Server[Q, R any] struct {
 // ServerRaw is a RPC server handling raw messages with a header and []byte body.
 // See Server for a generic, typed version.
 type ServerRaw struct {
-	call func(Message) Message
+	call func(Message) (Message, error)
 
 	in  io.Reader
 	out io.Writer
@@ -106,6 +106,11 @@ func (s *ServerRaw) Wait() error {
 }
 
 func (s *ServerRaw) readInOut() error {
+	// We currently treat all errors in here as fatal.
+	// This means that the server will stop taking requests and
+	// needs to be restarted.
+	// Server implementations should communicate client error situations
+	// via the response message.
 	var err error
 	for err == nil {
 		var header Header
@@ -118,12 +123,18 @@ func (s *ServerRaw) readInOut() error {
 			break
 		}
 
-		response := s.call(
+		var response Message
+		response, err = s.call(
 			Message{
 				Header: header,
 				Body:   body,
 			},
 		)
+
+		if err != nil {
+			break
+		}
+
 		response.Header.Size = uint32(len(response.Body))
 
 		if err = response.Write(s.out); err != nil {
@@ -131,12 +142,14 @@ func (s *ServerRaw) readInOut() error {
 		}
 	}
 
-	// TODO(bep) return real errors to caller.
 	return err
 }
 
 type ServerRawOptions struct {
-	Call func(message Message) Message
+	// Call is the message exhcange between the client and server.
+	// Note that any error returned by this function will be treated as a fatal error and the server is stopped.
+	// Validation errors etc. should be returned in the response message.
+	Call func(message Message) (Message, error)
 	In   io.Reader
 	Out  io.Writer
 }

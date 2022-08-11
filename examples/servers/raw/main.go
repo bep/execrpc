@@ -11,11 +11,11 @@ func main() {
 		execrpc.ServerRawOptions{
 			In:  os.Stdin,
 			Out: os.Stdout,
-			Call: func(message execrpc.Message) execrpc.Message {
+			Call: func(message execrpc.Message) (execrpc.Message, error) {
 				return execrpc.Message{
 					Header: message.Header,
 					Body:   append([]byte("echo: "), message.Body...),
-				}
+				}, nil
 			},
 		},
 	)

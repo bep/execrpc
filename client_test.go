@@ -41,9 +41,20 @@ func TestExecTyped(t *testing.T) {
 	defer func() {
 		c.Assert(client.Close(), qt.IsNil)
 	}()
-	c.Assert(err, qt.IsNil)
-	result, err := client.Execute(model.ExampleRequest{Text: "world"})
-	c.Assert(err, qt.IsNil)
-	c.Assert(string(result.Hello), qt.Equals, "Hello world!")
+
+	c.Run("OK", func(c *qt.C) {
+		c.Assert(err, qt.IsNil)
+		result, err := client.Execute(model.ExampleRequest{Text: "world"})
+		c.Assert(err, qt.IsNil)
+		c.Assert(result.Err(), qt.IsNil)
+		c.Assert(string(result.Hello), qt.Equals, "Hello world!")
+	})
+
+	c.Run("Error", func(c *qt.C) {
+		c.Assert(err, qt.IsNil)
+		result, err := client.Execute(model.ExampleRequest{Text: "fail"})
+		c.Assert(err, qt.IsNil)
+		c.Assert(result.Err(), qt.IsNotNil)
+	})
 
 }
