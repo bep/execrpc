@@ -9,8 +9,6 @@ import (
 func main() {
 	server, err := execrpc.NewServerRaw(
 		execrpc.ServerRawOptions{
-			In:  os.Stdin,
-			Out: os.Stdout,
 			Call: func(message execrpc.Message) (execrpc.Message, error) {
 				return execrpc.Message{
 					Header: message.Header,

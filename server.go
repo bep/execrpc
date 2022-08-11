@@ -3,6 +3,7 @@ package execrpc
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/bep/execrpc/codecs"
 	"golang.org/x/sync/errgroup"
@@ -12,17 +13,34 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
 	}
-	if opts.In == nil {
-		return nil, fmt.Errorf("opts: In reader is required")
+
+	origStdout := os.Stdout
+	done := make(chan bool)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
 	}
-	if opts.Out == nil {
-		return nil, fmt.Errorf("opts: Out writer is required")
-	}
+
+	// Prevent server implementations from freezing the server when writing to stdout (this will happen).
+	os.Stdout = w
+
+	go func() {
+		// Copy all output from the pipe to stderr
+		_, _ = io.Copy(os.Stderr, r)
+		done <- true
+
+	}()
 
 	return &ServerRaw{
 		call: opts.Call,
-		in:   opts.In,
-		out:  opts.Out,
+		onStop: func() {
+			// Close one side of the pipe.
+			_ = w.Close()
+			<-done
+		},
+		in:  os.Stdin,
+		out: origStdout,
 	}, nil
 }
 
@@ -54,8 +72,6 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 	rawServer, err := NewServerRaw(
 		ServerRawOptions{
 			Call: call,
-			In:   opts.In,
-			Out:  opts.Out,
 		},
 	)
 
@@ -71,8 +87,6 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 type ServerOptions[Q, R any] struct {
 	Call  func(Q) R
 	Codec codecs.Codec[R, Q]
-	In    io.Reader
-	Out   io.Writer
 }
 
 type Server[Q, R any] struct {
@@ -83,6 +97,8 @@ type Server[Q, R any] struct {
 // See Server for a generic, typed version.
 type ServerRaw struct {
 	call func(Message) (Message, error)
+
+	onStop func()
 
 	in  io.Reader
 	out io.Writer
@@ -102,7 +118,12 @@ func (s *ServerRaw) Start() error {
 }
 
 func (s *ServerRaw) Wait() error {
-	return s.g.Wait()
+	err := s.g.Wait()
+	if s.onStop != nil {
+		s.onStop()
+	}
+
+	return err
 }
 
 func (s *ServerRaw) readInOut() error {
@@ -150,6 +171,4 @@ type ServerRawOptions struct {
 	// Note that any error returned by this function will be treated as a fatal error and the server is stopped.
 	// Validation errors etc. should be returned in the response message.
 	Call func(message Message) (Message, error)
-	In   io.Reader
-	Out  io.Writer
 }

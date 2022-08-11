@@ -4,12 +4,12 @@ type ExampleRequest struct {
 	Text string `json:"text"`
 }
 
-type ExampelResponse struct {
+type ExampleResponse struct {
 	Hello string `json:"hello"`
 	Error *Error `json:"err"`
 }
 
-func (r ExampelResponse) Err() error {
+func (r ExampleResponse) Err() error {
 	if r.Error == nil {
 		// Make sure that resp.Err() == nil.
 		return nil

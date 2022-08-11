@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -11,17 +12,20 @@ import (
 
 func main() {
 	server, err := execrpc.NewServer(
-		execrpc.ServerOptions[model.ExampleRequest, model.ExampelResponse]{
-			In:    os.Stdin,
-			Out:   os.Stdout,
-			Codec: codecs.JSONCodec[model.ExampelResponse, model.ExampleRequest]{},
-			Call: func(req model.ExampleRequest) model.ExampelResponse {
+		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
+			Codec: codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{},
+			Call: func(req model.ExampleRequest) model.ExampleResponse {
+				if req.Text == "stdout" {
+					// Make sure that the server doesn't hang when writing to os.Stdout.
+					fmt.Fprintln(os.Stdout, "write some text to stdout, this should end up in stderr")
+				}
+
 				if req.Text == "fail" {
-					return model.ExampelResponse{
+					return model.ExampleResponse{
 						Error: &model.Error{Msg: "failed to echo"},
 					}
 				}
-				return model.ExampelResponse{
+				return model.ExampleResponse{
 					Hello: "Hello " + req.Text + "!",
 				}
 			},

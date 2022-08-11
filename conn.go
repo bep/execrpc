@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"time"
@@ -25,7 +26,7 @@ func newConn(cmd *exec.Cmd) (_ conn, err error) {
 	out, err := cmd.StdoutPipe()
 	stdErr := &tailBuffer{limit: 1024}
 	c := conn{out, in, stdErr, cmd}
-	cmd.Stderr = c.stdErr
+	cmd.Stderr = io.MultiWriter(c.stdErr, os.Stderr)
 
 	return c, err
 }
