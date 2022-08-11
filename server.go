@@ -70,7 +70,7 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 
 type ServerOptions[Q, R any] struct {
 	Call  func(Q) R
-	Codec codecs.Codec[Q, R]
+	Codec codecs.Codec[R, Q]
 	In    io.Reader
 	Out   io.Writer
 }

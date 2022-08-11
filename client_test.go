@@ -35,7 +35,7 @@ func TestExecTyped(t *testing.T) {
 				Cmd:     "go",
 				Args:    []string{"run", "./examples/servers/typed"},
 			},
-			Codec: codecs.JSONCodec[model.ExampelResponse, model.ExampleRequest]{},
+			Codec: codecs.JSONCodec[model.ExampleRequest, model.ExampelResponse]{},
 		})
 
 	defer func() {

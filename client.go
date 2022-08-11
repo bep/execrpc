@@ -34,24 +34,24 @@ func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
 
 type Client[Q, R any] struct {
 	rawClient *ClientRaw
-	codec     codecs.Codec[R, Q]
+	codec     codecs.Codec[Q, R]
 }
 
 func (c *Client[Q, R]) Execute(req Q) (R, error) {
 	body, err := c.codec.Encode(req)
-	var r R
+	var resp R
 	if err != nil {
-		return r, err
+		return resp, err
 	}
 	message, err := c.rawClient.Execute(body)
 	if err != nil {
-		return r, err
+		return resp, err
 	}
-	err = c.codec.Decode(message.Body, &r)
+	err = c.codec.Decode(message.Body, &resp)
 	if err != nil {
-		return r, err
+		return resp, err
 	}
-	return r, nil
+	return resp, nil
 }
 
 func (c *Client[Q, R]) Close() error {
@@ -227,7 +227,7 @@ func (c *ClientRaw) send(call *call) error {
 
 type ClientOptions[Q, R any] struct {
 	ClientRawOptions
-	Codec codecs.Codec[R, Q]
+	Codec codecs.Codec[Q, R]
 }
 
 type ClientRawOptions struct {

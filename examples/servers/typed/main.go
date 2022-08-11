@@ -14,7 +14,7 @@ func main() {
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampelResponse]{
 			In:    os.Stdin,
 			Out:   os.Stdout,
-			Codec: codecs.JSONCodec[model.ExampleRequest, model.ExampelResponse]{},
+			Codec: codecs.JSONCodec[model.ExampelResponse, model.ExampleRequest]{},
 			Call: func(req model.ExampleRequest) model.ExampelResponse {
 				return model.ExampelResponse{
 					Hello: "Hello " + req.Text + "!",

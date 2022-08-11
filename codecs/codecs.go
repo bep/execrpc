@@ -9,21 +9,21 @@ import (
 
 // Codec defines the interface for a two way conversion between Q  and R.
 type Codec[Q, R any] interface {
-	Decode([]byte, *Q) error
-	Encode(R) ([]byte, error)
+	Encode(Q) ([]byte, error)
+	Decode([]byte, *R) error
 }
 
 // TOMLCodec is a Codec that uses TOML as the underlying format.
 type TOMLCodec[Q, R any] struct{}
 
-func (c TOMLCodec[Q, R]) Decode(b []byte, q *Q) error {
-	return toml.Unmarshal(b, q)
+func (c TOMLCodec[Q, R]) Decode(b []byte, r *R) error {
+	return toml.Unmarshal(b, r)
 }
 
-func (c TOMLCodec[Q, R]) Encode(r R) ([]byte, error) {
+func (c TOMLCodec[Q, R]) Encode(q Q) ([]byte, error) {
 	var b bytes.Buffer
 	enc := toml.NewEncoder(&b)
-	if err := enc.Encode(r); err != nil {
+	if err := enc.Encode(q); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
@@ -32,10 +32,10 @@ func (c TOMLCodec[Q, R]) Encode(r R) ([]byte, error) {
 // JSONCodec is a Codec that uses JSON as the underlying format.
 type JSONCodec[Q, R any] struct{}
 
-func (c JSONCodec[Q, R]) Decode(b []byte, q *Q) error {
-	return json.Unmarshal(b, q)
+func (c JSONCodec[Q, R]) Decode(b []byte, r *R) error {
+	return json.Unmarshal(b, r)
 }
 
-func (c JSONCodec[Q, R]) Encode(r R) ([]byte, error) {
-	return json.Marshal(r)
+func (c JSONCodec[Q, R]) Encode(q Q) ([]byte, error) {
+	return json.Marshal(q)
 }
