@@ -9,13 +9,56 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bep/execrpc/codecs"
 )
 
 // ErrShutdown will be returned from Execute and Close if the client is or
 // is about to be shut down.
 var ErrShutdown = errors.New("connection is shut down")
 
-func StartClient(opts ClientOptions) (*Client, error) {
+func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
+	if opts.Codec == nil {
+		return nil, errors.New("opts: Codec is required")
+	}
+	rawClient, err := StartClientRaw(opts.ClientRawOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client[Q, R]{
+		rawClient: rawClient,
+		codec:     opts.Codec,
+	}, nil
+}
+
+type Client[Q, R any] struct {
+	rawClient *ClientRaw
+	codec     codecs.Codec[R, Q]
+}
+
+func (c *Client[Q, R]) Execute(req Q) (R, error) {
+	body, err := c.codec.Encode(req)
+	var r R
+	if err != nil {
+		return r, err
+	}
+	message, err := c.rawClient.Execute(body)
+	if err != nil {
+		return r, err
+	}
+	err = c.codec.Decode(message.Body, &r)
+	if err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+func (c *Client[Q, R]) Close() error {
+	return c.rawClient.Close()
+}
+
+func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = time.Second * 10
 	}
@@ -32,7 +75,7 @@ func StartClient(opts ClientOptions) (*Client, error) {
 		return nil, err
 	}
 
-	client := &Client{
+	client := &ClientRaw{
 		version: opts.Version,
 		timeout: opts.Timeout,
 		conn:    conn,
@@ -44,7 +87,7 @@ func StartClient(opts ClientOptions) (*Client, error) {
 	return client, nil
 }
 
-type Client struct {
+type ClientRaw struct {
 	version uint8
 
 	conn conn
@@ -62,7 +105,7 @@ type Client struct {
 	pending map[uint32]*call
 }
 
-func (c *Client) Close() error {
+func (c *ClientRaw) Close() error {
 	if err := c.conn.Close(); err != nil {
 		return c.addErrContext("close", err)
 	}
@@ -71,7 +114,7 @@ func (c *Client) Close() error {
 
 // Execute sends body to the server and returns the Message it receives.
 // It's safe to call Execute from multiple goroutines.
-func (c *Client) Execute(body []byte) (Message, error) {
+func (c *ClientRaw) Execute(body []byte) (Message, error) {
 	call, err := c.newCall(body)
 	if err != nil {
 		return Message{}, err
@@ -90,11 +133,11 @@ func (c *Client) Execute(body []byte) (Message, error) {
 	return call.Response, nil
 }
 
-func (c *Client) addErrContext(op string, err error) error {
+func (c *ClientRaw) addErrContext(op string, err error) error {
 	return fmt.Errorf("%s: %s %s", op, err, c.conn.stdErr.String())
 }
 
-func (c *Client) newCall(body []byte) (*call, error) {
+func (c *ClientRaw) newCall(body []byte) (*call, error) {
 	c.mu.Lock()
 	c.seq++
 	id := c.seq
@@ -124,7 +167,7 @@ func (c *Client) newCall(body []byte) (*call, error) {
 	return call, c.send(call)
 }
 
-func (c *Client) input() {
+func (c *ClientRaw) input() {
 	var err error
 
 	for err == nil {
@@ -170,7 +213,7 @@ func (c *Client) input() {
 	}
 }
 
-func (c *Client) send(call *call) error {
+func (c *ClientRaw) send(call *call) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.mu.Lock()
@@ -182,7 +225,12 @@ func (c *Client) send(call *call) error {
 	return call.Request.Write(c.conn)
 }
 
-type ClientOptions struct {
+type ClientOptions[Q, R any] struct {
+	ClientRawOptions
+	Codec codecs.Codec[R, Q]
+}
+
+type ClientRawOptions struct {
 	// Version number passed to the server.
 	Version uint8
 

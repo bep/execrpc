@@ -1,32 +1,88 @@
 package execrpc
 
 import (
+	"fmt"
 	"io"
 
+	"github.com/bep/execrpc/codecs"
 	"golang.org/x/sync/errgroup"
 )
 
-func NewServer(opts ServerOptions) *Server {
+func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
-		panic("opts.Call is nil")
+		return nil, fmt.Errorf("opts: Call function is required")
 	}
 	if opts.In == nil {
-		panic("opts.In is nil")
+		return nil, fmt.Errorf("opts: In reader is required")
 	}
 	if opts.Out == nil {
-		panic("opts.Out is nil")
+		return nil, fmt.Errorf("opts: Out writer is required")
 	}
 
-	return &Server{
+	return &ServerRaw{
 		call: opts.Call,
 		in:   opts.In,
 		out:  opts.Out,
-	}
+	}, nil
 }
 
-type Server struct {
-	call func(message Message) Message
-	//Decode func(message Message) (T, error)
+func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
+	if opts.Call == nil {
+		return nil, fmt.Errorf("opts: Call function is required")
+	}
+	if opts.Codec == nil {
+		return nil, fmt.Errorf("opts: Codec is required")
+	}
+
+	call := func(message Message) Message {
+		var q Q
+		err := opts.Codec.Decode(message.Body, &q)
+		if err != nil {
+			panic("TODO(bep)")
+		}
+		r := opts.Call(q)
+		b, err := opts.Codec.Encode(r)
+		if err != nil {
+			panic("TODO(bep)")
+		}
+		return Message{
+			Header: message.Header,
+			Body:   b,
+		}
+	}
+
+	rawServer, err := NewServerRaw(
+		ServerRawOptions{
+			Call: call,
+			In:   opts.In,
+			Out:  opts.Out,
+		},
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server[Q, R]{
+		ServerRaw: rawServer,
+	}, nil
+}
+
+type ServerOptions[Q, R any] struct {
+	Call  func(Q) R
+	Codec codecs.Codec[Q, R]
+	In    io.Reader
+	Out   io.Writer
+}
+
+type Server[Q, R any] struct {
+	*ServerRaw
+}
+
+// ServerRaw is a RPC server handling raw messages with a header and []byte body.
+// See Server for a generic, typed version.
+type ServerRaw struct {
+	call func(Message) Message
 
 	in  io.Reader
 	out io.Writer
@@ -34,7 +90,7 @@ type Server struct {
 	g *errgroup.Group
 }
 
-func (s *Server) Start() error {
+func (s *ServerRaw) Start() error {
 	s.g = &errgroup.Group{}
 
 	s.g.Go(func() error {
@@ -45,11 +101,11 @@ func (s *Server) Start() error {
 
 }
 
-func (s *Server) Wait() error {
+func (s *ServerRaw) Wait() error {
 	return s.g.Wait()
 }
 
-func (s *Server) readInOut() error {
+func (s *ServerRaw) readInOut() error {
 	var err error
 	for err == nil {
 		var header Header
@@ -79,7 +135,7 @@ func (s *Server) readInOut() error {
 	return err
 }
 
-type ServerOptions struct {
+type ServerRawOptions struct {
 	Call func(message Message) Message
 	In   io.Reader
 	Out  io.Writer

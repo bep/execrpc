@@ -1,15 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/bep/execrpc"
 )
 
 func main() {
-	server := execrpc.NewServer(
-		execrpc.ServerOptions{
+	server, err := execrpc.NewServerRaw(
+		execrpc.ServerRawOptions{
 			In:  os.Stdin,
 			Out: os.Stdout,
 			Call: func(message execrpc.Message) execrpc.Message {
@@ -21,13 +20,17 @@ func main() {
 		},
 	)
 
+	if err != nil {
+		handleErr(err)
+	}
+
 	if err := server.Start(); err != nil {
-		print("error: failed to start echo server:", err)
-		os.Exit(1)
+		handleErr(err)
 	}
 	_ = server.Wait()
 }
 
-func print(s string, args ...any) {
-	fmt.Fprintln(os.Stderr, s, args)
+func handleErr(err error) {
+	print("error: failed to start echo server:", err)
+	os.Exit(1)
 }
