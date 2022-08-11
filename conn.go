@@ -1,18 +1,25 @@
 package execrpc
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// ErrTimeoutWaitingForServer is returned on timeouts starting the server.
+var ErrTimeoutWaitingForServer = errors.New("timed out waiting for server to start")
 
 var brokenPipeRe = regexp.MustCompile("Broken pipe|pipe is being closed")
 
-func newConn(cmd *exec.Cmd) (_ conn, err error) {
+func newConn(cmd *exec.Cmd, timeout time.Duration) (_ conn, err error) {
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return conn{}, err
@@ -25,7 +32,13 @@ func newConn(cmd *exec.Cmd) (_ conn, err error) {
 
 	out, err := cmd.StdoutPipe()
 	stdErr := &tailBuffer{limit: 1024}
-	c := conn{out, in, stdErr, cmd}
+	c := conn{
+		ReadCloser:  out,
+		WriteCloser: in,
+		stdErr:      stdErr,
+		cmd:         cmd,
+		timeout:     timeout,
+	}
 	cmd.Stderr = io.MultiWriter(c.stdErr, os.Stderr)
 
 	return c, err
@@ -36,6 +49,8 @@ type conn struct {
 	io.WriteCloser
 	stdErr *tailBuffer
 	cmd    *exec.Cmd
+
+	timeout time.Duration
 }
 
 // Close closes conn's WriteCloser, ReadClosers, and waits for the command to finish.
@@ -61,7 +76,60 @@ func (c conn) Start() error {
 	if err != nil {
 		return c.Close()
 	}
-	return err
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		// THe server will announce when it's ready to read from stdin
+		// by writing  a special string to stdout.
+		for {
+			select {
+			case <-ctx.Done():
+				return ErrTimeoutWaitingForServer
+			default:
+				done := make(chan bool)
+				errc := make(chan error)
+				go func() {
+					var read []byte
+					br := bufio.NewReader(c)
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						default:
+							b, err := br.ReadByte()
+							if err != nil {
+								errc <- err
+								break
+							}
+							read = append(read, b)
+							if bytes.Contains(read, serverStarted) {
+								remainder := bytes.Replace(read, serverStarted, nil, 1)
+								if len(remainder) > 0 {
+									os.Stdout.Write(remainder)
+								}
+								done <- true
+								return
+							}
+						}
+					}
+				}()
+
+				select {
+				case <-ctx.Done():
+					return ErrTimeoutWaitingForServer
+				case err := <-errc:
+					return err
+				case <-done:
+					return nil
+				}
+			}
+		}
+	})
+
+	return g.Wait()
 }
 
 // the server ends itself on EOF, this is just to give it some

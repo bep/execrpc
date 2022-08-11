@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -13,14 +14,15 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("typed-example: ")
 
-	codecID := os.Getenv("EXECRPC_CODEC")
-	if codecID == "" {
-		codecID = "json"
-	}
-
-	// Note that it's not possible to print anything to stdout.
-	// Use stdout for logging.
-	log.Printf("Starting server using codec %s", codecID)
+	// Some test flags from the client.
+	var (
+		codecID                  = os.Getenv("EXECRPC_CODEC")
+		printOutsideServerBefore = os.Getenv("EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE") != ""
+		printOutsideServerAfter  = os.Getenv("EXECRPC_PRINT_OUTSIDE_SERVER_AFTER") != ""
+		printInsideServer        = os.Getenv("EXECRPC_PRINT_INSIDE_SERVER") != ""
+		callShouldFail           = os.Getenv("EXECRPC_CALL_SHOULD_FAIL") != ""
+		sendLogMessage           = os.Getenv("EXECRPC_SEND_LOG_MESSAGE") != ""
+	)
 
 	var codec codecs.Codec[model.ExampleResponse, model.ExampleRequest]
 	switch codecID {
@@ -32,18 +34,41 @@ func main() {
 		codec = codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{}
 	}
 
-	server, err := execrpc.NewServer(
+	if printOutsideServerBefore {
+		fmt.Println("Printing outside server before")
+	}
+
+	var (
+		server *execrpc.Server[model.ExampleRequest, model.ExampleResponse]
+		err    error
+	)
+
+	server, err = execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
 			Codec: codec,
 			Call: func(req model.ExampleRequest) model.ExampleResponse {
-				if req.Text == "fail" {
+				if printInsideServer {
+					fmt.Println("Printing inside server")
+				}
+				if callShouldFail {
 					return model.ExampleResponse{
 						Error: &model.Error{Msg: "failed to echo"},
 					}
 				}
+
+				if sendLogMessage {
+					server.Send(execrpc.Message{
+						Header: execrpc.Header{
+							Status: 150,
+						},
+						Body: []byte("log message"),
+					})
+				}
+
 				return model.ExampleResponse{
 					Hello: "Hello " + req.Text + "!",
 				}
+
 			},
 		},
 	)
@@ -54,6 +79,11 @@ func main() {
 
 	if err := server.Start(); err != nil {
 		handleErr(err)
+	}
+
+	if printOutsideServerAfter {
+		fmt.Println("Printing outside server after")
+
 	}
 	_ = server.Wait()
 

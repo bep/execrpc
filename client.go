@@ -85,7 +85,7 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	}
 	cmd.Env = env
 
-	conn, err := newConn(cmd)
+	conn, err := newConn(cmd, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (c *ClientRaw) Execute(body []byte) (Message, error) {
 	select {
 	case call = <-call.Done:
 	case <-time.After(c.timeout):
-		return Message{}, errors.New("timeout waiting for the server to respond; check that you're not writing anything to stdout inside the server")
+		return Message{}, ErrTimeoutWaitingForServer
 	}
 
 	if call.Error != nil {

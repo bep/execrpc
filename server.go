@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/bep/execrpc/codecs"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
+	// MessageStatusOK is the status code for a successful message.
 	MessageStatusOK = iota
+	// MessageStatusErrDecodeFailed is the status code for a message that failed to decode.
 	MessageStatusErrDecodeFailed
+	// MessageStatusErrEncodeFailed is the status code for a message that failed to encode.
 	MessageStatusErrEncodeFailed
 
 	// MessageStatusSystemReservedMax is the maximum value for a system reserved status code.
@@ -19,9 +23,6 @@ const (
 )
 
 // NewServerRaw creates a new Server. using the given options.
-// Note that we're passing message via stdin and stdout,
-// so it's not possible to print anything to stdout inside a server (that will time out).
-// Use stderr for loigging (e.gl via fmt.Printf). TODO(bep) fix this.
 func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
@@ -29,16 +30,10 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 
 	return &ServerRaw{
 		call: opts.Call,
-		in:   os.Stdin,
-		out:  os.Stdout,
 	}, nil
 }
 
 // NewServer creates a new Server. using the given options.
-// Note that we're passing message via stdin and stdout,
-// so it's not possible to print anything to stdout inside a server (that will time out).
-// Use stderr for loigging (e.gl via fmt.Printf).  TODO(bep) fix this.
-// Also, you must make sure to use the same codec as the client.
 func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
@@ -90,11 +85,13 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 	}, nil
 }
 
+// ServerOptions is the options for a server.
 type ServerOptions[Q, R any] struct {
 	Call  func(Q) R
 	Codec codecs.Codec[R, Q]
 }
 
+// Server is a stringly typed server for requests of type Q and responses of tye R.
 type Server[Q, R any] struct {
 	*ServerRaw
 }
@@ -104,29 +101,91 @@ type Server[Q, R any] struct {
 type ServerRaw struct {
 	call func(Message) (Message, error)
 
+	startInit sync.Once
+	onStop    func()
+
 	in  io.Reader
 	out io.Writer
 
 	g *errgroup.Group
 }
 
-func (s *ServerRaw) Start() error {
-	s.g = &errgroup.Group{}
+// Written by server to os.Stdout to signal it's ready for reading.
+var serverStarted = []byte("_server_started")
 
-	s.g.Go(func() error {
-		return s.readInOut()
+// Start sets upt the server communication and starts the server loop.
+// It's safe to call Start multiple times, but only the first call will start the server.
+func (s *ServerRaw) Start() error {
+	var initErr error
+	s.startInit.Do(func() {
+		// os.Stdout is where the client will listen for a specific byte stream,
+		// and any writes to stdout outside of this protocol (e.g. fmt.Println("hello world!") will
+		// freeze the server.
+		//
+		// To prevent that, we preserve the original stdout for the server and redirect user output to stderr.
+		origStdout := os.Stdout
+		done := make(chan bool)
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			initErr = err
+			return
+		}
+
+		os.Stdout = w
+
+		go func() {
+			// Copy all output from the pipe to stderr.
+			_, _ = io.Copy(os.Stderr, r)
+			// Done when the pipe is closed.
+			done <- true
+		}()
+
+		s.in = os.Stdin
+		s.out = origStdout
+		s.onStop = func() {
+			// Close one side of the pipe.
+			_ = w.Close()
+			<-done
+		}
+
+		s.g = &errgroup.Group{}
+
+		// Signal to client that the server is ready.
+		fmt.Fprint(s.out, string(serverStarted)+"\n")
+
+		s.g.Go(func() error {
+			return s.inputOutput()
+		})
 	})
 
-	return nil
-
+	return initErr
 }
 
+// Wait waits for the server to stop.
+// This happens when it gets disconnected from the client.
 func (s *ServerRaw) Wait() error {
 	err := s.g.Wait()
+	if s.onStop != nil {
+		s.onStop()
+	}
 	return err
 }
 
-func (s *ServerRaw) readInOut() error {
+// Send sends a message to the client.
+// This is normally used for log messages and similar,
+// and these messages should have a zero (0) ID.
+// Replies to requests are normally handled in Call.
+func (s *ServerRaw) Send(message Message) {
+	message.Header.Size = uint32(len(message.Body))
+	if err := message.Write(s.out); err != nil {
+		panic("failed to send message: " + err.Error()) // TODO(bep) set up a channel for these messages.
+	}
+}
+
+// inputOutput reads messages from the stdin and calls the server's call function.
+// The response is written to stdout.
+func (s *ServerRaw) inputOutput() error {
 	// We currently treat all errors in here as fatal.
 	// This means that the server will stop taking requests and
 	// needs to be restarted.
