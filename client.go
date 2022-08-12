@@ -94,11 +94,18 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 		return nil, err
 	}
 
+	if opts.OnMessage == nil {
+		opts.OnMessage = func(Message) {
+
+		}
+	}
+
 	client := &ClientRaw{
-		version: opts.Version,
-		timeout: opts.Timeout,
-		conn:    conn,
-		pending: make(map[uint32]*call),
+		version:   opts.Version,
+		timeout:   opts.Timeout,
+		onMessage: opts.OnMessage,
+		conn:      conn,
+		pending:   make(map[uint32]*call),
 	}
 
 	go client.input()
@@ -113,6 +120,8 @@ type ClientRaw struct {
 
 	closing  bool
 	shutdown bool
+
+	onMessage func(Message)
 
 	timeout time.Duration
 
@@ -196,6 +205,11 @@ func (c *ClientRaw) input() {
 			break
 		}
 		id := message.Header.ID
+		if id == 0 {
+			// A message with ID 0 is a standalone message (e.g. log message)
+			c.onMessage(message)
+			continue
+		}
 
 		// Attach it to the correct pending call.
 		c.mu.Lock()
@@ -265,6 +279,9 @@ type ClientRawOptions struct {
 	// vallues in this slice have precedence.
 	// A slice of strings of the form "key=value"
 	Env []string
+
+	// Callback for messages received from server without an ID (e.g. log message).
+	OnMessage func(Message)
 
 	// The timeout for the client.
 	Timeout time.Duration

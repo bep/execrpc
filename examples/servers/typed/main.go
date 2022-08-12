@@ -21,7 +21,7 @@ func main() {
 		printOutsideServerAfter  = os.Getenv("EXECRPC_PRINT_OUTSIDE_SERVER_AFTER") != ""
 		printInsideServer        = os.Getenv("EXECRPC_PRINT_INSIDE_SERVER") != ""
 		callShouldFail           = os.Getenv("EXECRPC_CALL_SHOULD_FAIL") != ""
-		sendLogMessage           = os.Getenv("EXECRPC_SEND_LOG_MESSAGE") != ""
+		sendLogMessage           = os.Getenv("EXECRPC_SEND_TWO_LOG_MESSAGES") != ""
 	)
 
 	var codec codecs.Codec[model.ExampleResponse, model.ExampleRequest]
@@ -46,7 +46,7 @@ func main() {
 	server, err = execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
 			Codec: codec,
-			Call: func(req model.ExampleRequest) model.ExampleResponse {
+			Call: func(d execrpc.Dispatcher, req model.ExampleRequest) model.ExampleResponse {
 				if printInsideServer {
 					fmt.Println("Printing inside server")
 				}
@@ -57,12 +57,19 @@ func main() {
 				}
 
 				if sendLogMessage {
-					server.Send(execrpc.Message{
-						Header: execrpc.Header{
-							Status: 150,
+					d.Send(
+						execrpc.Message{
+							Header: execrpc.Header{
+								Status: 150,
+							},
+							Body: []byte("first log message"),
 						},
-						Body: []byte("log message"),
-					})
+						execrpc.Message{
+							Header: execrpc.Header{
+								Status: 150,
+							},
+							Body: []byte("second log message"),
+						})
 				}
 
 				return model.ExampleResponse{

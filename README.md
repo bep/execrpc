@@ -37,7 +37,7 @@ func main() {
 	server, _ := execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
 			Codec: codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{},
-			Call: func(req model.ExampleRequest) model.ExampleResponse {
+			Call: func(d execrpc.Dispatcher, req model.ExampleRequest) model.ExampleResponse {
 				return model.ExampleResponse{
 					Hello: "Hello " + req.Text + "!",
 				}

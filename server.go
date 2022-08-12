@@ -27,10 +27,13 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
 	}
-
-	return &ServerRaw{
+	s := &ServerRaw{
 		call: opts.Call,
-	}, nil
+	}
+	s.dispatcher = &messageDispatcher{
+		s: s,
+	}
+	return s, nil
 }
 
 // NewServer creates a new Server. using the given options.
@@ -42,7 +45,9 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		return nil, fmt.Errorf("opts: Codec is required")
 	}
 
-	call := func(message Message) (Message, error) {
+	var rawServer *ServerRaw
+
+	call := func(d Dispatcher, message Message) (Message, error) {
 		var q Q
 		err := opts.Codec.Decode(message.Body, &q)
 		if err != nil {
@@ -53,7 +58,7 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 			m.Header.Status = MessageStatusErrDecodeFailed
 			return m, nil
 		}
-		r := opts.Call(q)
+		r := opts.Call(rawServer.dispatcher, q)
 		b, err := opts.Codec.Encode(r)
 		if err != nil {
 
@@ -70,7 +75,8 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		}, nil
 	}
 
-	rawServer, err := NewServerRaw(
+	var err error
+	rawServer, err = NewServerRaw(
 		ServerRawOptions{
 			Call: call,
 		},
@@ -87,7 +93,7 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 
 // ServerOptions is the options for a server.
 type ServerOptions[Q, R any] struct {
-	Call  func(Q) R
+	Call  func(Dispatcher, Q) R
 	Codec codecs.Codec[R, Q]
 }
 
@@ -99,9 +105,11 @@ type Server[Q, R any] struct {
 // ServerRaw is a RPC server handling raw messages with a header and []byte body.
 // See Server for a generic, typed version.
 type ServerRaw struct {
-	call func(Message) (Message, error)
+	call       func(Dispatcher, Message) (Message, error)
+	dispatcher *messageDispatcher
 
 	startInit sync.Once
+	started   bool
 	onStop    func()
 
 	in  io.Reader
@@ -118,6 +126,10 @@ var serverStarted = []byte("_server_started")
 func (s *ServerRaw) Start() error {
 	var initErr error
 	s.startInit.Do(func() {
+		defer func() {
+			s.started = true
+		}()
+
 		// os.Stdout is where the client will listen for a specific byte stream,
 		// and any writes to stdout outside of this protocol (e.g. fmt.Println("hello world!") will
 		// freeze the server.
@@ -157,6 +169,11 @@ func (s *ServerRaw) Start() error {
 		s.g.Go(func() error {
 			return s.inputOutput()
 		})
+
+		s.g.Go(func() error {
+
+			return nil
+		})
 	})
 
 	return initErr
@@ -165,6 +182,7 @@ func (s *ServerRaw) Start() error {
 // Wait waits for the server to stop.
 // This happens when it gets disconnected from the client.
 func (s *ServerRaw) Wait() error {
+	s.checkStarted()
 	err := s.g.Wait()
 	if s.onStop != nil {
 		s.onStop()
@@ -172,21 +190,17 @@ func (s *ServerRaw) Wait() error {
 	return err
 }
 
-// Send sends a message to the client.
-// This is normally used for log messages and similar,
-// and these messages should have a zero (0) ID.
-// Replies to requests are normally handled in Call.
-func (s *ServerRaw) Send(message Message) {
-	message.Header.Size = uint32(len(message.Body))
-	if err := message.Write(s.out); err != nil {
-		panic("failed to send message: " + err.Error()) // TODO(bep) set up a channel for these messages.
+func (s *ServerRaw) checkStarted() {
+	if !s.started {
+		panic("server not started")
 	}
 }
 
 // inputOutput reads messages from the stdin and calls the server's call function.
 // The response is written to stdout.
 func (s *ServerRaw) inputOutput() error {
-	// We currently treat all errors in here as fatal.
+
+	// We currently treat all errors in here as stop signals.
 	// This means that the server will stop taking requests and
 	// needs to be restarted.
 	// Server implementations should communicate client error situations
@@ -205,6 +219,7 @@ func (s *ServerRaw) inputOutput() error {
 
 		var response Message
 		response, err = s.call(
+			s.dispatcher,
 			Message{
 				Header: header,
 				Body:   body,
@@ -230,5 +245,31 @@ type ServerRawOptions struct {
 	// Call is the message exhcange between the client and server.
 	// Note that any error returned by this function will be treated as a fatal error and the server is stopped.
 	// Validation errors etc. should be returned in the response message.
-	Call func(message Message) (Message, error)
+	// The Dispatcher can be used to send messages to the client outside of the request/response loop, e.g. log messages.
+	// Note that these messages can not have an ID.
+	Call func(Dispatcher, Message) (Message, error)
+}
+
+type messageDispatcher struct {
+	s *ServerRaw
+}
+
+type Dispatcher interface {
+	// Send sends one or more message back to the client.
+	// This is normally used for log messages and similar,
+	// and these messages should have a zero (0) ID.
+	Send(...Message) error
+}
+
+func (s *messageDispatcher) Send(messages ...Message) error {
+	for _, message := range messages {
+		if message.Header.ID != 0 {
+			return fmt.Errorf("message ID must be 0")
+		}
+		message.Header.Size = uint32(len(message.Body))
+		if err := message.Write(s.s.out); err != nil {
+			return err
+		}
+	}
+	return nil
 }

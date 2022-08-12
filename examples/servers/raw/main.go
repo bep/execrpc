@@ -9,7 +9,7 @@ import (
 func main() {
 	server, err := execrpc.NewServerRaw(
 		execrpc.ServerRawOptions{
-			Call: func(message execrpc.Message) (execrpc.Message, error) {
+			Call: func(d execrpc.Dispatcher, message execrpc.Message) (execrpc.Message, error) {
 				return execrpc.Message{
 					Header: message.Header,
 					Body:   append([]byte("echo: "), message.Body...),

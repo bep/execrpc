@@ -101,11 +101,29 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("Send log message from server", func(c *qt.C) {
-		client := newClient(c, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=json", "EXECRPC_SEND_LOG_MESSAGE=true")
-		result, err := client.Execute(model.ExampleRequest{Text: "world"})
+		var logMessages []execrpc.Message
+
+		client, err := execrpc.StartClient(
+			execrpc.ClientOptions[model.ExampleRequest, model.ExampleResponse]{
+				ClientRawOptions: execrpc.ClientRawOptions{
+					Version: 1,
+					Cmd:     "go",
+					Args:    []string{"run", "./examples/servers/typed"},
+					Env:     []string{"EXECRPC_CODEC=json", "EXECRPC_SEND_TWO_LOG_MESSAGES=true"},
+					Timeout: 4 * time.Second,
+					OnMessage: func(msg execrpc.Message) {
+						logMessages = append(logMessages, msg)
+					},
+				},
+				Codec: codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{},
+			},
+		)
+		if err != nil {
+			c.Fatal(err)
+		}
+		_, err = client.Execute(model.ExampleRequest{Text: "world"})
 		c.Assert(err, qt.IsNil)
-		c.Assert(result.Err(), qt.IsNil)
-		c.Assert(string(result.Hello), qt.Equals, "Hello world!")
+		c.Assert(len(logMessages), qt.Equals, 2)
 		c.Assert(client.Close(), qt.IsNil)
 	})
 
