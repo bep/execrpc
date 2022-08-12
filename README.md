@@ -72,4 +72,4 @@ Client/Gob-10      227 ± 0%
 
 ## Status Codes
 
-The status codes in the header between 1 and 100 are reserved for the system. This will typically be used to catch decoding/encoding errors on the server.
+The status codes in the header between 1 and 99 are reserved for the system. This will typically be used to catch decoding/encoding errors on the server.

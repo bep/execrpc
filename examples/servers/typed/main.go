@@ -38,12 +38,7 @@ func main() {
 		fmt.Println("Printing outside server before")
 	}
 
-	var (
-		server *execrpc.Server[model.ExampleRequest, model.ExampleResponse]
-		err    error
-	)
-
-	server, err = execrpc.NewServer(
+	server, err := execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
 			Codec: codec,
 			Call: func(d execrpc.Dispatcher, req model.ExampleRequest) model.ExampleResponse {

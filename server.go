@@ -19,7 +19,7 @@ const (
 	MessageStatusErrEncodeFailed
 
 	// MessageStatusSystemReservedMax is the maximum value for a system reserved status code.
-	MessageStatusSystemReservedMax = 100
+	MessageStatusSystemReservedMax = 99
 )
 
 // NewServerRaw creates a new Server. using the given options.
