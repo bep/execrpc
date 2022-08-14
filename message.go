@@ -29,6 +29,8 @@ func (m *Message) Write(w io.Writer) error {
 	return err
 }
 
+// Header is the header of a message.
+// ID and Size are set by the system.
 type Header struct {
 	ID      uint32
 	Version uint8
@@ -36,6 +38,7 @@ type Header struct {
 	Size    uint32
 }
 
+// Read reads the header from the reader.
 func (h *Header) Read(r io.Reader) error {
 	buf := make([]byte, 10)
 	_, err := io.ReadFull(r, buf)
@@ -49,6 +52,7 @@ func (h *Header) Read(r io.Reader) error {
 	return nil
 }
 
+// Write writes the header to the writer.
 func (h Header) Write(w io.Writer) error {
 	buff := make([]byte, 10)
 	binary.BigEndian.PutUint32(buff[0:4], h.ID)

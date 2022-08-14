@@ -18,10 +18,20 @@ import (
 // is about to be shut down.
 var ErrShutdown = errors.New("connection is shut down")
 
+const (
+	// Signal to server about what codec to use.
+	envClientCodec = "EXECRPC_CLIENT_CODEC"
+)
+
+// StartClient starts a client for the given options.
 func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
 	if opts.Codec == nil {
 		return nil, errors.New("opts: Codec is required")
 	}
+
+	// Pass default settings to the server.
+	envhelpers.SetEnvVars(&opts.Env, envClientCodec, opts.Codec.Name())
+
 	rawClient, err := StartClientRaw(opts.ClientRawOptions)
 	if err != nil {
 		return nil, err
@@ -33,6 +43,7 @@ func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
 	}, nil
 }
 
+// Client is a strongly typed RPC client.
 type Client[Q, R any] struct {
 	rawClient *ClientRaw
 	codec     codecs.Codec[Q, R]
@@ -63,10 +74,12 @@ func (c *Client[Q, R]) Execute(r Q) (R, error) {
 	return resp, nil
 }
 
+// Close closes the client.
 func (c *Client[Q, R]) Close() error {
 	return c.rawClient.Close()
 }
 
+// StartClientRaw starts a untyped client client for the given options.
 func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = time.Second * 10
@@ -115,6 +128,8 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	return client, nil
 }
 
+// ClientRaw is a raw RPC client.
+// Raw means that the client doesn't do any type conversion, a byte slice is what you get.
 type ClientRaw struct {
 	version uint8
 
@@ -135,6 +150,7 @@ type ClientRaw struct {
 	pending map[uint32]*call
 }
 
+// Close closes the server connection and waits for the server process to quit.
 func (c *ClientRaw) Close() error {
 	if err := c.conn.Close(); err != nil {
 		return c.addErrContext("close", err)
@@ -261,11 +277,13 @@ func (c *ClientRaw) send(call *call) error {
 	return call.Request.Write(c.conn)
 }
 
+// ClientOptions are options for the client.
 type ClientOptions[Q, R any] struct {
 	ClientRawOptions
 	Codec codecs.Codec[Q, R]
 }
 
+// ClientRawOptions are options for the raw part of the client.
 type ClientRawOptions struct {
 	// Version number passed to the server.
 	Version uint8

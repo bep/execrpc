@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/bep/execrpc"
-	"github.com/bep/execrpc/codecs"
 	"github.com/bep/execrpc/examples/model"
 )
 
@@ -16,7 +15,6 @@ func main() {
 
 	// Some test flags from the client.
 	var (
-		codecID                  = os.Getenv("EXECRPC_CODEC")
 		printOutsideServerBefore = os.Getenv("EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE") != ""
 		printOutsideServerAfter  = os.Getenv("EXECRPC_PRINT_OUTSIDE_SERVER_AFTER") != ""
 		printInsideServer        = os.Getenv("EXECRPC_PRINT_INSIDE_SERVER") != ""
@@ -24,23 +22,12 @@ func main() {
 		sendLogMessage           = os.Getenv("EXECRPC_SEND_TWO_LOG_MESSAGES") != ""
 	)
 
-	var codec codecs.Codec[model.ExampleResponse, model.ExampleRequest]
-	switch codecID {
-	case "toml":
-		codec = codecs.TOMLCodec[model.ExampleResponse, model.ExampleRequest]{}
-	case "gob":
-		codec = codecs.GobCodec[model.ExampleResponse, model.ExampleRequest]{}
-	default:
-		codec = codecs.JSONCodec[model.ExampleResponse, model.ExampleRequest]{}
-	}
-
 	if printOutsideServerBefore {
 		fmt.Println("Printing outside server before")
 	}
 
 	server, err := execrpc.NewServer(
 		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
-			Codec: codec,
 			Call: func(d execrpc.Dispatcher, req model.ExampleRequest) model.ExampleResponse {
 				if printInsideServer {
 					fmt.Println("Printing inside server")
