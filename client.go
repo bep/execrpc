@@ -85,6 +85,8 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	}
 	cmd.Env = env
 
+	cmd.Dir = opts.Dir
+
 	conn, err := newConn(cmd, opts.Timeout)
 	if err != nil {
 		return nil, err
@@ -279,6 +281,11 @@ type ClientRawOptions struct {
 	// vallues in this slice have precedence.
 	// A slice of strings of the form "key=value"
 	Env []string
+
+	// Dir specifies the working directory of the command.
+	// If Dir is the empty string, the command runs in the
+	// calling process's current directory.
+	Dir string
 
 	// Callback for messages received from server without an ID (e.g. log message).
 	OnMessage func(Message)
