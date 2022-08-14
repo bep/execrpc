@@ -1,6 +1,7 @@
 package execrpc
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ const (
 	MessageStatusSystemReservedMax = 99
 )
 
-// NewServerRaw creates a new Server. using the given options.
+// NewServerRaw creates a new Server using the given options.
 func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
@@ -42,7 +43,13 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		return nil, fmt.Errorf("opts: Call function is required")
 	}
 	if opts.Codec == nil {
-		return nil, fmt.Errorf("opts: Codec is required")
+		if opts.Codec == nil {
+			var err error
+			opts.Codec, err = codecs.ForName[R, Q](os.Getenv(envClientCodec))
+			if err != nil {
+				return nil, errors.New("opts: Codec is required")
+			}
+		}
 	}
 
 	var rawServer *ServerRaw
@@ -61,7 +68,6 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 		r := opts.Call(rawServer.dispatcher, q)
 		b, err := opts.Codec.Encode(r)
 		if err != nil {
-
 			m := Message{
 				Header: message.Header,
 				Body:   []byte(fmt.Sprintf("failed to encode response: %s. Check that client and server uses the same codec.", err)),
@@ -93,7 +99,11 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 
 // ServerOptions is the options for a server.
 type ServerOptions[Q, R any] struct {
-	Call  func(Dispatcher, Q) R
+	// Call is the function that will be called when a request is received.
+	Call func(Dispatcher, Q) R
+
+	// Codec is the codec that will be used to encode and decode requests and responses.
+	// The client will tell the server what codec is in use, so in most cases you should just leave this unset.
 	Codec codecs.Codec[R, Q]
 }
 
@@ -241,12 +251,13 @@ func (s *ServerRaw) inputOutput() error {
 	return err
 }
 
+// ServerRawOptions is the options for a raw portion of the server.
 type ServerRawOptions struct {
 	// Call is the message exhcange between the client and server.
 	// Note that any error returned by this function will be treated as a fatal error and the server is stopped.
 	// Validation errors etc. should be returned in the response message.
 	// The Dispatcher can be used to send messages to the client outside of the request/response loop, e.g. log messages.
-	// Note that these messages can not have an ID.
+	// Note that these messages must have ID 0.
 	Call func(Dispatcher, Message) (Message, error)
 }
 
@@ -254,6 +265,7 @@ type messageDispatcher struct {
 	s *ServerRaw
 }
 
+// Dispatcher is the interface for dispatching standalone messages to the client, e.g. log messages.
 type Dispatcher interface {
 	// Send sends one or more message back to the client.
 	// This is normally used for log messages and similar,

@@ -86,17 +86,17 @@ func TestExecTyped(t *testing.T) {
 	}
 
 	c.Run("JSON", func(c *qt.C) {
-		client := newClient(c, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=json")
+		client := newClient(c, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{})
 		runBasicTestForClient(c, client)
 	})
 
 	c.Run("TOML", func(c *qt.C) {
-		client := newClient(c, codecs.TOMLCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=toml")
+		client := newClient(c, codecs.TOMLCodec[model.ExampleRequest, model.ExampleResponse]{})
 		runBasicTestForClient(c, client)
 	})
 
 	c.Run("Gob", func(c *qt.C) {
-		client := newClient(c, codecs.GobCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=gob")
+		client := newClient(c, codecs.GobCodec[model.ExampleRequest, model.ExampleResponse]{})
 		runBasicTestForClient(c, client)
 	})
 
@@ -109,7 +109,7 @@ func TestExecTyped(t *testing.T) {
 					Version: 1,
 					Cmd:     "go",
 					Args:    []string{"run", "./examples/servers/typed"},
-					Env:     []string{"EXECRPC_CODEC=json", "EXECRPC_SEND_TWO_LOG_MESSAGES=true"},
+					Env:     []string{"EXECRPC_SEND_TWO_LOG_MESSAGES=true"},
 					Timeout: 4 * time.Second,
 					OnMessage: func(msg execrpc.Message) {
 						logMessages = append(logMessages, msg)
@@ -128,7 +128,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("Error", func(c *qt.C) {
-		client := newClient(c, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=json", "EXECRPC_CALL_SHOULD_FAIL=true")
+		client := newClient(c, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CALL_SHOULD_FAIL=true")
 		result, err := client.Execute(model.ExampleRequest{Text: "hello"})
 		c.Assert(err, qt.IsNil)
 		c.Assert(result.Err(), qt.IsNotNil)
@@ -160,7 +160,7 @@ func TestExecTyped(t *testing.T) {
 }
 
 func TestExecTypedConcurrent(t *testing.T) {
-	client := newTestClient(t, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=json")
+	client := newTestClient(t, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{})
 	var g errgroup.Group
 
 	for i := 0; i < 100; i++ {
@@ -195,7 +195,7 @@ func BenchmarkClient(b *testing.B) {
 	const word = "World"
 
 	b.Run("JSON", func(b *testing.B) {
-		client := newTestClient(b, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=json")
+		client := newTestClient(b, codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{})
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				_, err := client.Execute(model.ExampleRequest{Text: word})
@@ -207,7 +207,7 @@ func BenchmarkClient(b *testing.B) {
 	})
 
 	b.Run("TOML", func(b *testing.B) {
-		client := newTestClient(b, codecs.TOMLCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=toml")
+		client := newTestClient(b, codecs.TOMLCodec[model.ExampleRequest, model.ExampleResponse]{})
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				_, err := client.Execute(model.ExampleRequest{Text: word})
@@ -219,7 +219,7 @@ func BenchmarkClient(b *testing.B) {
 	})
 
 	b.Run("Gob", func(b *testing.B) {
-		client := newTestClient(b, codecs.GobCodec[model.ExampleRequest, model.ExampleResponse]{}, "EXECRPC_CODEC=gob")
+		client := newTestClient(b, codecs.GobCodec[model.ExampleRequest, model.ExampleResponse]{})
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				_, err := client.Execute(model.ExampleRequest{Text: word})
