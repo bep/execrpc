@@ -106,7 +106,7 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	}
 
 	if err := conn.Start(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed start server: %s: %s", err, conn.stdErr.String())
 	}
 
 	if opts.OnMessage == nil {

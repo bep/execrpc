@@ -18,7 +18,8 @@ func TestExecRaw(t *testing.T) {
 		execrpc.ClientRawOptions{
 			Version: 1,
 			Cmd:     "go",
-			Args:    []string{"run", "./examples/servers/raw"},
+			Dir:     "./examples/servers/raw",
+			Args:    []string{"run", "."},
 		})
 
 	c.Assert(err, qt.IsNil)
@@ -41,7 +42,8 @@ func newTestClient(t testing.TB, codec codecs.Codec[model.ExampleRequest, model.
 			ClientRawOptions: execrpc.ClientRawOptions{
 				Version: 1,
 				Cmd:     "go",
-				Args:    []string{"run", "./examples/servers/typed"},
+				Dir:     "./examples/servers/typed",
+				Args:    []string{"run", "."},
 				Env:     env,
 			},
 			Codec: codec,
@@ -62,7 +64,8 @@ func TestExecTyped(t *testing.T) {
 				ClientRawOptions: execrpc.ClientRawOptions{
 					Version: 1,
 					Cmd:     "go",
-					Args:    []string{"run", "./examples/servers/typed"},
+					Dir:     "./examples/servers/typed",
+					Args:    []string{"run", "."},
 					Env:     env,
 					Timeout: 4 * time.Second,
 				},
@@ -108,7 +111,8 @@ func TestExecTyped(t *testing.T) {
 				ClientRawOptions: execrpc.ClientRawOptions{
 					Version: 1,
 					Cmd:     "go",
-					Args:    []string{"run", "./examples/servers/typed"},
+					Dir:     "./examples/servers/typed",
+					Args:    []string{"run", "."},
 					Env:     []string{"EXECRPC_SEND_TWO_LOG_MESSAGES=true"},
 					Timeout: 4 * time.Second,
 					OnMessage: func(msg execrpc.Message) {
