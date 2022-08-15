@@ -1,7 +1,6 @@
 package execrpc
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,13 +41,13 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 	if opts.Call == nil {
 		return nil, fmt.Errorf("opts: Call function is required")
 	}
+
 	if opts.Codec == nil {
-		if opts.Codec == nil {
-			var err error
-			opts.Codec, err = codecs.ForName[R, Q](os.Getenv(envClientCodec))
-			if err != nil {
-				return nil, errors.New("opts: Codec is required")
-			}
+		codecName := os.Getenv(envClientCodec)
+		var err error
+		opts.Codec, err = codecs.ForName[R, Q](codecName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve codec from env variable %s with value %q (set by client); it can optionally be set in ServerOptions", envClientCodec, codecName)
 		}
 	}
 

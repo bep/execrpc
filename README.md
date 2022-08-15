@@ -12,7 +12,8 @@ client, err := execrpc.StartClient(
 			ClientRawOptions: execrpc.ClientRawOptions{
 				Version: 1,
 				Cmd:     "go",
-				Args:    []string{"run", "./examples/servers/typed"},
+				Dir:  "./examples/servers/typed"
+				Args:    []string{"run", "."},
 			},
 			Codec: codecs.JSONCodec[model.ExampleRequest, model.ExampleResponse]{},
 		},
