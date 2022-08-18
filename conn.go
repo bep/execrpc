@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -151,14 +152,24 @@ func (c conn) waitWithTimeout() error {
 }
 
 type tailBuffer struct {
+	mu sync.Mutex
+
 	limit int
-	bytes.Buffer
+	buff  bytes.Buffer
 }
 
 func (b *tailBuffer) Write(p []byte) (n int, err error) {
-	if len(p)+b.Buffer.Len() > b.limit {
-		b.Reset()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(p)+b.buff.Len() > b.limit {
+		b.buff.Reset()
 	}
-	n, err = b.Buffer.Write(p)
+	n, err = b.buff.Write(p)
 	return
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buff.String()
 }
