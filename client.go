@@ -131,7 +131,7 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 // ClientRaw is a raw RPC client.
 // Raw means that the client doesn't do any type conversion, a byte slice is what you get.
 type ClientRaw struct {
-	version uint8
+	version uint16
 
 	conn conn
 
@@ -298,7 +298,7 @@ type ClientOptions[Q, R any] struct {
 // ClientRawOptions are options for the raw part of the client.
 type ClientRawOptions struct {
 	// Version number passed to the server.
-	Version uint8
+	Version uint16
 
 	// The server to start.
 	Cmd string

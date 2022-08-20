@@ -42,13 +42,15 @@ func main() {
 					d.Send(
 						execrpc.Message{
 							Header: execrpc.Header{
-								Status: 150,
+								Version: 32,
+								Status:  150,
 							},
 							Body: []byte("first log message"),
 						},
 						execrpc.Message{
 							Header: execrpc.Header{
-								Status: 150,
+								Version: 32,
+								Status:  150,
 							},
 							Body: []byte("second log message"),
 						})

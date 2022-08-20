@@ -33,31 +33,33 @@ func (m *Message) Write(w io.Writer) error {
 // ID and Size are set by the system.
 type Header struct {
 	ID      uint32
-	Version uint8
-	Status  uint8
+	Version uint16
+	Status  uint16
 	Size    uint32
 }
 
+const headerSize = 12
+
 // Read reads the header from the reader.
 func (h *Header) Read(r io.Reader) error {
-	buf := make([]byte, 10)
+	buf := make([]byte, headerSize)
 	_, err := io.ReadFull(r, buf)
 	if err != nil {
 		return err
 	}
 	h.ID = binary.BigEndian.Uint32(buf[0:4])
-	h.Version = buf[4]
-	h.Status = buf[5]
+	h.Version = binary.BigEndian.Uint16(buf[4:6])
+	h.Status = binary.BigEndian.Uint16(buf[6:8])
 	h.Size = binary.BigEndian.Uint32(buf[6:])
 	return nil
 }
 
 // Write writes the header to the writer.
 func (h Header) Write(w io.Writer) error {
-	buff := make([]byte, 10)
+	buff := make([]byte, headerSize)
 	binary.BigEndian.PutUint32(buff[0:4], h.ID)
-	buff[4] = h.Version
-	buff[5] = h.Status
+	binary.BigEndian.PutUint16(buff[4:6], h.Version)
+	binary.BigEndian.PutUint16(buff[6:8], h.Status)
 	binary.BigEndian.PutUint32(buff[6:], h.Size)
 	_, err := w.Write(buff)
 	return err
