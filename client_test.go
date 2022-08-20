@@ -33,6 +33,21 @@ func TestExecRaw(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		c.Assert(string(result.Body), qt.Equals, "echo: hello")
 	})
+}
+
+func TestExecStartFailed(t *testing.T) {
+	c := qt.New(t)
+	client, err := execrpc.StartClientRaw(
+		execrpc.ClientRawOptions{
+			Version: 1,
+			Cmd:     "go",
+			Dir:     "./examples/servers/doesnotexist",
+			Args:    []string{"run", "."},
+		})
+
+	c.Assert(err, qt.IsNotNil)
+	c.Assert(err.Error(), qt.Contains, "failed to start server: chdir ./examples/servers/doesnotexist")
+	c.Assert(client.Close(), qt.IsNil)
 
 }
 
