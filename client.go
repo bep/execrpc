@@ -106,7 +106,7 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	}
 
 	if err := conn.Start(); err != nil {
-		return nil, fmt.Errorf("failed start server: %s: %s", err, conn.stdErr.String())
+		return nil, fmt.Errorf("failed to start server: %s: %s", err, conn.stdErr.String())
 	}
 
 	if opts.OnMessage == nil {
@@ -152,10 +152,22 @@ type ClientRaw struct {
 
 // Close closes the server connection and waits for the server process to quit.
 func (c *ClientRaw) Close() error {
-	if err := c.conn.Close(); err != nil {
-		return c.addErrContext("close", err)
+	if c == nil {
+		return nil
 	}
-	return nil
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closing {
+		return ErrShutdown
+	}
+	c.closing = true
+
+	err := c.conn.Close()
+
+	return err
 }
 
 // Execute sends body to the server and returns the Message it receives.

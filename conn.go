@@ -75,7 +75,7 @@ func (c conn) Close() error {
 func (c conn) Start() error {
 	err := c.cmd.Start()
 	if err != nil {
-		return c.Close()
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
