@@ -50,7 +50,7 @@ func (h *Header) Read(r io.Reader) error {
 	h.ID = binary.BigEndian.Uint32(buf[0:4])
 	h.Version = binary.BigEndian.Uint16(buf[4:6])
 	h.Status = binary.BigEndian.Uint16(buf[6:8])
-	h.Size = binary.BigEndian.Uint32(buf[6:])
+	h.Size = binary.BigEndian.Uint32(buf[8:])
 	return nil
 }
 
@@ -60,7 +60,7 @@ func (h Header) Write(w io.Writer) error {
 	binary.BigEndian.PutUint32(buff[0:4], h.ID)
 	binary.BigEndian.PutUint16(buff[4:6], h.Version)
 	binary.BigEndian.PutUint16(buff[6:8], h.Status)
-	binary.BigEndian.PutUint32(buff[6:], h.Size)
+	binary.BigEndian.PutUint32(buff[8:], h.Size)
 	_, err := w.Write(buff)
 	return err
 }

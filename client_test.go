@@ -144,7 +144,7 @@ func TestExecTyped(t *testing.T) {
 		c.Assert(err, qt.IsNil)
 		c.Assert(len(logMessages), qt.Equals, 2)
 		c.Assert(string(logMessages[0].Body), qt.Equals, "first log message")
-		c.Assert(logMessages[0].Header.Status, qt.Equals, uint16(0))
+		c.Assert(logMessages[0].Header.Status, qt.Equals, uint16(150))
 		c.Assert(logMessages[0].Header.Version, qt.Equals, uint16(32))
 		c.Assert(client.Close(), qt.IsNil)
 	})
