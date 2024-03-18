@@ -15,8 +15,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ErrTimeoutWaitingForServer is returned on timeouts starting the server.
-var ErrTimeoutWaitingForServer = errors.New("timed out waiting for server to start")
+var (
+	// ErrTimeoutWaitingForServer is returned on timeouts starting the server.
+	ErrTimeoutWaitingForServer = errors.New("timed out waiting for server to start")
+	// ErrTimeoutWaitingForCall is returned on timeouts waiting for a call to complete.
+	ErrTimeoutWaitingForCall = errors.New("timed out waiting for call to complete")
+)
 
 var brokenPipeRe = regexp.MustCompile("Broken pipe|pipe is being closed")
 
@@ -83,7 +87,7 @@ func (c conn) Start() error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		// THe server will announce when it's ready to read from stdin
+		// The server will announce when it's ready to read from stdin
 		// by writing  a special string to stdout.
 		for {
 			select {
@@ -137,6 +141,8 @@ func (c conn) Start() error {
 // time to do so.
 func (c conn) waitWithTimeout() error {
 	result := make(chan error, 1)
+	timer := time.NewTimer(c.timeout)
+	defer timer.Stop()
 	go func() { result <- c.cmd.Wait() }()
 	select {
 	case err := <-result:
@@ -146,7 +152,7 @@ func (c conn) waitWithTimeout() error {
 			}
 		}
 		return err
-	case <-time.After(time.Second):
+	case <-timer.C:
 		return errors.New("timed out waiting for server to finish")
 	}
 }

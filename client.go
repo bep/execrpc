@@ -24,7 +24,7 @@ const (
 )
 
 // StartClient starts a client for the given options.
-func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
+func StartClient[Q, M, R any](opts ClientOptions[Q, M, R]) (*Client[Q, M, R], error) {
 	if opts.Codec == nil {
 		return nil, errors.New("opts: Codec is required")
 	}
@@ -37,52 +37,129 @@ func StartClient[Q, R any](opts ClientOptions[Q, R]) (*Client[Q, R], error) {
 		return nil, err
 	}
 
-	return &Client[Q, R]{
+	return &Client[Q, M, R]{
 		rawClient: rawClient,
-		codec:     opts.Codec,
+		opts:      opts,
 	}, nil
 }
 
 // Client is a strongly typed RPC client.
-type Client[Q, R any] struct {
+type Client[Q, M, R any] struct {
 	rawClient *ClientRaw
-	codec     codecs.Codec[Q, R]
+	opts      ClientOptions[Q, M, R]
 }
 
-// Execute encodes and sends r the server and returns the response object.
-// It's safe to call Execute from multiple goroutines.
-func (c *Client[Q, R]) Execute(r Q) (R, error) {
-	body, err := c.codec.Encode(r)
-	var resp R
-	if err != nil {
-		return resp, err
+// Result is the result of a request
+// with zero or more messages and the receipt.
+type Result[M, R any] struct {
+	messages chan M
+	receipt  chan R
+	errc     chan error
+}
+
+// Messages returns the messages from the server.
+func (r Result[M, R]) Messages() <-chan M {
+	return r.messages
+}
+
+// Receipt returns the receipt from the server.
+func (r Result[M, R]) Receipt() <-chan R {
+	return r.receipt
+}
+
+// Err returns any error.
+func (r Result[M, R]) Err() error {
+	select {
+	case err := <-r.errc:
+		return err
+	default:
+		return nil
 	}
-	message, err := c.rawClient.Execute(body)
-	if err != nil {
-		return resp, err
+}
+
+func (r Result[M, R]) close() {
+	close(r.messages)
+	close(r.receipt)
+}
+
+// MessagesRaw returns the raw messages from the server.
+// These are not connected to the request-response flow,
+// typically used for log messages etc.
+func (c *Client[Q, M, R]) MessagesRaw() <-chan Message {
+	return c.rawClient.Messages
+}
+
+// Execute sends the request to the server and returns the result.
+// You should check Err() both before and after reading from the messages and receipt channels.
+func (c *Client[Q, M, R]) Execute(r Q) Result[M, R] {
+	result := Result[M, R]{
+		messages: make(chan M, 10),
+		receipt:  make(chan R, 1),
+		errc:     make(chan error, 1),
 	}
 
-	if message.Header.Status > MessageStatusOK && message.Header.Status <= MessageStatusSystemReservedMax {
-		// All of these are currently error situations produced by the server.
-		return resp, fmt.Errorf("%s (error code %d)", message.Body, message.Header.Status)
+	body, err := c.opts.Codec.Encode(r)
+	if err != nil {
+		result.errc <- fmt.Errorf("failed to encode request: %w", err)
+		result.close()
+		return result
 	}
 
-	err = c.codec.Decode(message.Body, &resp)
-	if err != nil {
-		return resp, err
-	}
-	return resp, nil
+	go func() {
+		defer func() {
+			result.close()
+		}()
+
+		messagesRaw := make(chan Message, 10)
+		go func() {
+			err := c.rawClient.Execute(body, messagesRaw)
+			if err != nil {
+				result.errc <- fmt.Errorf("failed to execute: %w", err)
+			}
+		}()
+
+		for message := range messagesRaw {
+			if message.Header.Status > MessageStatusContinue && message.Header.Status <= MessageStatusSystemReservedMax {
+				// All of these are currently error situations produced by the server.
+				result.errc <- fmt.Errorf("%s (error code %d)", message.Body, message.Header.Status)
+				return
+			}
+
+			if message.Header.Status == MessageStatusContinue {
+				var resp M
+				err = c.opts.Codec.Decode(message.Body, &resp)
+				if err != nil {
+					result.errc <- err
+					return
+				}
+				result.messages <- resp
+			} else {
+				// Receipt.
+				var rec R
+				err = c.opts.Codec.Decode(message.Body, &rec)
+				if err != nil {
+					result.errc <- err
+					return
+				}
+				result.receipt <- rec
+				return
+			}
+
+		}
+	}()
+
+	return result
 }
 
 // Close closes the client.
-func (c *Client[Q, R]) Close() error {
+func (c *Client[Q, M, R]) Close() error {
 	return c.rawClient.Close()
 }
 
 // StartClientRaw starts a untyped client client for the given options.
 func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 	if opts.Timeout == 0 {
-		opts.Timeout = time.Second * 10
+		opts.Timeout = time.Second * 30
 	}
 
 	cmd := exec.Command(opts.Cmd, opts.Args...)
@@ -109,18 +186,12 @@ func StartClientRaw(opts ClientRawOptions) (*ClientRaw, error) {
 		return nil, fmt.Errorf("failed to start server: %s: %s", err, conn.stdErr.String())
 	}
 
-	if opts.OnMessage == nil {
-		opts.OnMessage = func(Message) {
-
-		}
-	}
-
 	client := &ClientRaw{
-		version:   opts.Version,
-		timeout:   opts.Timeout,
-		onMessage: opts.OnMessage,
-		conn:      conn,
-		pending:   make(map[uint32]*call),
+		version:  opts.Version,
+		timeout:  opts.Timeout,
+		conn:     conn,
+		pending:  make(map[uint32]*call),
+		Messages: make(chan Message, 10),
 	}
 
 	go client.input()
@@ -138,7 +209,8 @@ type ClientRaw struct {
 	closing  bool
 	shutdown bool
 
-	onMessage func(Message)
+	// Messages from the server that are not part of the request-response flow.
+	Messages chan Message
 
 	timeout time.Duration
 
@@ -155,6 +227,8 @@ func (c *ClientRaw) Close() error {
 	if c == nil {
 		return nil
 	}
+	defer close(c.Messages)
+
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.mu.Lock()
@@ -170,32 +244,38 @@ func (c *ClientRaw) Close() error {
 	return err
 }
 
-// Execute sends body to the server and returns the Message it receives.
+// Execute sends body to the server and sends any messages to the messages channel.
 // It's safe to call Execute from multiple goroutines.
-func (c *ClientRaw) Execute(body []byte) (Message, error) {
-	call, err := c.newCall(body)
+// The messages channel wil be closed when the call is done.
+func (c *ClientRaw) Execute(body []byte, messages chan<- Message) error {
+	defer close(messages)
+
+	call, err := c.newCall(body, messages)
 	if err != nil {
-		return Message{}, err
+		return err
 	}
+
+	timer := time.NewTimer(c.timeout)
+	defer timer.Stop()
 
 	select {
 	case call = <-call.Done:
-	case <-time.After(c.timeout):
-		return Message{}, ErrTimeoutWaitingForServer
+	case <-timer.C:
+		return ErrTimeoutWaitingForCall
 	}
 
 	if call.Error != nil {
-		return call.Response, c.addErrContext("execute", call.Error)
+		return c.addErrContext("execute", call.Error)
 	}
 
-	return call.Response, nil
+	return nil
 }
 
 func (c *ClientRaw) addErrContext(op string, err error) error {
 	return fmt.Errorf("%s: %s %s", op, err, c.conn.stdErr.String())
 }
 
-func (c *ClientRaw) newCall(body []byte) (*call, error) {
+func (c *ClientRaw) newCall(body []byte, messages chan<- Message) (*call, error) {
 	c.mu.Lock()
 	c.seq++
 	id := c.seq
@@ -209,6 +289,7 @@ func (c *ClientRaw) newCall(body []byte) (*call, error) {
 			},
 			Body: body,
 		},
+		Messages: messages,
 	}
 
 	if c.shutdown || c.closing {
@@ -234,23 +315,34 @@ func (c *ClientRaw) input() {
 		if err != nil {
 			break
 		}
+
 		id := message.Header.ID
 		if id == 0 {
 			// A message with ID 0 is a standalone message (e.g. log message)
-			c.onMessage(message)
+			// and not part of the request-response flow.
+			c.Messages <- message
 			continue
 		}
 
 		// Attach it to the correct pending call.
 		c.mu.Lock()
-		call := c.pending[id]
+		call, found := c.pending[id]
+		if !found {
+			panic(fmt.Sprintf("call with ID %d not found", id))
+		}
+		if message.Header.Status == MessageStatusContinue {
+			call.Messages <- message
+			c.mu.Unlock()
+			continue
+		}
+
 		delete(c.pending, id)
 		c.mu.Unlock()
 		if call == nil {
 			err = fmt.Errorf("call with ID %d not found", id)
 			break
 		}
-		call.Response = message
+		call.Messages <- message
 		call.done()
 	}
 
@@ -274,7 +366,6 @@ func (c *ClientRaw) input() {
 		call.Error = err
 		call.done()
 	}
-
 }
 
 func (c *ClientRaw) send(call *call) error {
@@ -290,9 +381,9 @@ func (c *ClientRaw) send(call *call) error {
 }
 
 // ClientOptions are options for the client.
-type ClientOptions[Q, R any] struct {
+type ClientOptions[Q, M, R any] struct {
 	ClientRawOptions
-	Codec codecs.Codec[Q, R]
+	Codec codecs.Codec
 }
 
 // ClientRawOptions are options for the raw part of the client.
@@ -317,16 +408,74 @@ type ClientRawOptions struct {
 	// calling process's current directory.
 	Dir string
 
-	// Callback for messages received from server without an ID (e.g. log message).
-	OnMessage func(Message)
-
 	// The timeout for the client.
 	Timeout time.Duration
 }
 
+var (
+	_ TagProvider          = &Identity{}
+	_ LastModifiedProvider = &Identity{}
+	_ SizeProvider         = &Identity{}
+)
+
+// Identity holds the modified time (Unix seconds) and a 64-bit checksum.
+type Identity struct {
+	LastModified int64  `json:"lastModified"`
+	ETag         string `json:"eTag"`
+	Size         uint32 `json:"size"`
+}
+
+// GetETag returns the checksum.
+func (i Identity) GetETag() string {
+	return i.ETag
+}
+
+// SetETag sets the checksum.
+func (i *Identity) SetETag(s string) {
+	i.ETag = s
+}
+
+// GetELastModified returns the last modified time.
+func (i Identity) GetELastModified() int64 {
+	return i.LastModified
+}
+
+// SetELastModified sets the last modified time.
+func (i *Identity) SetELastModified(t int64) {
+	i.LastModified = t
+}
+
+// GetESize returns the size.
+func (i Identity) GetESize() uint32 {
+	return i.Size
+}
+
+// SetESize sets the size.
+func (i *Identity) SetESize(s uint32) {
+	i.Size = s
+}
+
+// TagProvider is the interface for a type that can provide a eTag.
+type TagProvider interface {
+	GetETag() string
+	SetETag(string)
+}
+
+// LastModifiedProvider is the interface for a type that can provide a last modified time.
+type LastModifiedProvider interface {
+	GetELastModified() int64
+	SetELastModified(int64)
+}
+
+// SizeProvider is the interface for a type that can provide a size.
+type SizeProvider interface {
+	GetESize() uint32
+	SetESize(uint32)
+}
+
 type call struct {
 	Request  Message
-	Response Message
+	Messages chan<- Message
 	Error    error
 	Done     chan *call
 }
