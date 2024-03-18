@@ -30,5 +30,4 @@ func TestMessage(t *testing.T) {
 	c.Assert(m2.Read(&b), qt.IsNil)
 
 	c.Assert(m2, qt.DeepEquals, m1)
-
 }

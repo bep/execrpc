@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/bep/execrpc"
 	"github.com/bep/execrpc/examples/model"
@@ -20,26 +23,44 @@ func main() {
 		printInsideServer        = os.Getenv("EXECRPC_PRINT_INSIDE_SERVER") != ""
 		callShouldFail           = os.Getenv("EXECRPC_CALL_SHOULD_FAIL") != ""
 		sendLogMessage           = os.Getenv("EXECRPC_SEND_TWO_LOG_MESSAGES") != ""
+		noClose                  = os.Getenv("EXECRPC_NO_CLOSE") != ""
+		numMessagesStr           = os.Getenv("EXECRPC_NUM_MESSAGES")
+		numMessages              = 1
 	)
+
+	if numMessagesStr != "" {
+		numMessages, _ = strconv.Atoi(numMessagesStr)
+		if numMessages < 1 {
+			numMessages = 1
+		}
+	}
 
 	if printOutsideServerBefore {
 		fmt.Println("Printing outside server before")
 	}
 
+	getHasher := func() hash.Hash {
+		return fnv.New64a()
+	}
+
 	server, err := execrpc.NewServer(
-		execrpc.ServerOptions[model.ExampleRequest, model.ExampleResponse]{
-			Call: func(d execrpc.Dispatcher, req model.ExampleRequest) model.ExampleResponse {
+		execrpc.ServerOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
+			GetHasher: getHasher,
+			Handle: func(c *execrpc.Call[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]) {
 				if printInsideServer {
 					fmt.Println("Printing inside server")
 				}
 				if callShouldFail {
-					return model.ExampleResponse{
-						Error: &model.Error{Msg: "failed to echo"},
-					}
+					c.Close(
+						model.ExampleReceipt{
+							Error: &model.Error{Msg: "failed to echo"},
+						},
+					)
+					return
 				}
 
 				if sendLogMessage {
-					d.Send(
+					c.SendRaw(
 						execrpc.Message{
 							Header: execrpc.Header{
 								Version: 32,
@@ -53,17 +74,38 @@ func main() {
 								Status:  150,
 							},
 							Body: []byte("second log message"),
-						})
+						},
+					)
 				}
 
-				return model.ExampleResponse{
-					Hello: "Hello " + req.Text + "!",
+				for i := 0; i < numMessages; i++ {
+					c.Send(
+						model.ExampleMessage{
+							Hello: strconv.Itoa(i) + ": Hello " + c.Request.Text + "!",
+						},
+					)
 				}
 
+				if !noClose {
+					receipt := <-c.Close(
+						model.ExampleReceipt{
+							Text: "echoed: " + c.Request.Text,
+							Identity: execrpc.Identity{
+								// Just set size, the rest will be filled in by RPC library.
+								Size: 123,
+							},
+						},
+					)
+					if receipt.Text != "echoed: "+c.Request.Text {
+						log.Fatalf("expected receipt text to be %q, got %q", "echoed: "+c.Request.Text, receipt.Text)
+					}
+					if receipt.ETag == "" {
+						log.Fatalf("expected receipt eTag to be set")
+					}
+				}
 			},
 		},
 	)
-
 	if err != nil {
 		handleErr(err)
 	}
@@ -74,13 +116,10 @@ func main() {
 
 	if printOutsideServerAfter {
 		fmt.Println("Printing outside server after")
-
 	}
 	_ = server.Wait()
-
 }
 
 func handleErr(err error) {
 	log.Fatalf("error: failed to start typed echo server: %s", err)
-
 }

@@ -1,18 +1,25 @@
 package execrpc
 
 import (
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/bep/execrpc/codecs"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	// MessageStatusOK is the status code for a successful message.
+	// MessageStatusOK is the status code for a successful and complete message exchange.
 	MessageStatusOK = iota
+
+	// MessageStatusContinue is the status code for a message that should continue the conversation.
+	MessageStatusContinue
+
 	// MessageStatusErrDecodeFailed is the status code for a message that failed to decode.
 	MessageStatusErrDecodeFailed
 	// MessageStatusErrEncodeFailed is the status code for a message that failed to encode.
@@ -37,15 +44,15 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 }
 
 // NewServer creates a new Server. using the given options.
-func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
-	if opts.Call == nil {
-		return nil, fmt.Errorf("opts: Call function is required")
+func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], error) {
+	if opts.Handle == nil {
+		return nil, fmt.Errorf("opts: Handle function is required")
 	}
 
 	if opts.Codec == nil {
 		codecName := os.Getenv(envClientCodec)
 		var err error
-		opts.Codec, err = codecs.ForName[R, Q](codecName)
+		opts.Codec, err = codecs.ForName(codecName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve codec from env variable %s with value %q (set by client); it can optionally be set in ServerOptions", envClientCodec, codecName)
 		}
@@ -53,7 +60,7 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 
 	var rawServer *ServerRaw
 
-	call := func(d Dispatcher, message Message) (Message, error) {
+	callRaw := func(message Message, d Dispatcher) error {
 		var q Q
 		err := opts.Codec.Decode(message.Body, &q)
 		if err != nil {
@@ -62,59 +69,146 @@ func NewServer[Q, R any](opts ServerOptions[Q, R]) (*Server[Q, R], error) {
 				Body:   []byte(fmt.Sprintf("failed to decode request: %s. Check that client and server uses the same codec.", err)),
 			}
 			m.Header.Status = MessageStatusErrDecodeFailed
-			return m, nil
+			d.SendMessage(m)
+			return nil
 		}
-		r := opts.Call(rawServer.dispatcher, q)
-		b, err := opts.Codec.Encode(r)
-		if err != nil {
-			m := Message{
-				Header: message.Header,
-				Body:   []byte(fmt.Sprintf("failed to encode response: %s. Check that client and server uses the same codec.", err)),
+
+		call := &Call[Q, M, R]{
+			Request:      q,
+			messagesRaw:  make(chan Message, 10),
+			messages:     make(chan M, 10),
+			receiptFinal: make(chan R, 1),
+		}
+
+		go func() {
+			opts.Handle(call)
+			if !call.closed {
+				// The server returned without calling Close.
+				// This is OK, it just means that the server gave away
+				// the opportunity to set the receipt values.
+				call.close()
 			}
-			m.Header.Status = MessageStatusErrEncodeFailed
-			return m, nil
+		}()
+
+		// Handle standalone messages in its own goroutine.
+		go func() {
+			for message := range call.messagesRaw {
+				rawServer.dispatcher.SendMessage(message)
+			}
+		}()
+
+		var size uint32
+		var hasher hash.Hash
+		if opts.GetHasher != nil {
+			hasher = opts.GetHasher()
 		}
-		return Message{
-			Header: message.Header,
-			Body:   b,
-		}, nil
+
+		var shouldHash bool
+		if hasher != nil {
+			// Avoid hashing if the receipt does not implement Sum64Provider.
+			var r *R
+			_, shouldHash = any(r).(TagProvider)
+		}
+
+		defer func() {
+			b, err := opts.Codec.Encode(call.receiptFromServer)
+			h := message.Header
+			h.Status = MessageStatusOK
+			d.SendMessage(createMessage(b, err, h, MessageStatusErrEncodeFailed))
+		}()
+
+		var checksum string
+
+		for r := range call.messages {
+			b, err := opts.Codec.Encode(r)
+			h := message.Header
+			h.Status = MessageStatusContinue
+			m := createMessage(b, err, h, MessageStatusErrEncodeFailed)
+			d.SendMessage(m)
+			if shouldHash {
+				hasher.Write(m.Body)
+			}
+			size += uint32(len(m.Body))
+		}
+		if shouldHash {
+			checksum = hex.EncodeToString(hasher.Sum(nil))
+		}
+		setReceiptValuesIfNotSet(size, checksum, &call.receiptFromServer)
+
+		return nil
 	}
 
 	var err error
 	rawServer, err = NewServerRaw(
 		ServerRawOptions{
-			Call: call,
+			Call: callRaw,
 		},
 	)
-
 	if err != nil {
 		return nil, err
 	}
 
-	return &Server[Q, R]{
+	return &Server[Q, M, R]{
 		ServerRaw: rawServer,
 	}, nil
 }
 
-// ServerOptions is the options for a server.
-type ServerOptions[Q, R any] struct {
-	// Call is the function that will be called when a request is received.
-	Call func(Dispatcher, Q) R
+func setReceiptValuesIfNotSet(size uint32, checksum string, r any) {
+	if m, ok := any(r).(LastModifiedProvider); ok && m.GetELastModified() == 0 {
+		m.SetELastModified(time.Now().Unix())
+	}
+	if size != 0 {
+		if m, ok := any(r).(SizeProvider); ok && m.GetESize() == 0 {
+			m.SetESize(size)
+		}
+	}
+	if checksum != "" {
+		if m, ok := any(r).(TagProvider); ok && m.GetETag() == "" {
+			m.SetETag(checksum)
+		}
+	}
+}
 
-	// Codec is the codec that will be used to encode and decode requests and responses.
+func createMessage(b []byte, err error, h Header, failureStatus uint16) Message {
+	var m Message
+	if err != nil {
+		m = Message{
+			Header: h,
+			Body:   []byte(fmt.Sprintf("failed create message: %s. Check that client and server uses the same codec.", err)),
+		}
+		m.Header.Status = failureStatus
+	} else {
+		m = Message{
+			Header: h,
+			Body:   b,
+		}
+	}
+	return m
+}
+
+// ServerOptions is the options for a server.
+type ServerOptions[Q, M, R any] struct {
+	// Handle is the function that will be called when a request is received.
+	Handle func(*Call[Q, M, R])
+
+	// Codec is the codec that will be used to encode and decode requests, messages and receipts.
 	// The client will tell the server what codec is in use, so in most cases you should just leave this unset.
-	Codec codecs.Codec[R, Q]
+	Codec codecs.Codec
+
+	// GetHasher returns the hash instance to be used for the response body
+	// If it's not set or it returns nil, no hash will be calculated.
+	GetHasher func() hash.Hash
 }
 
 // Server is a stringly typed server for requests of type Q and responses of tye R.
-type Server[Q, R any] struct {
+type Server[Q, M, R any] struct {
 	*ServerRaw
 }
 
 // ServerRaw is a RPC server handling raw messages with a header and []byte body.
 // See Server for a generic, typed version.
 type ServerRaw struct {
-	call       func(Dispatcher, Message) (Message, error)
+	call       func(Message, Dispatcher) error
 	dispatcher *messageDispatcher
 
 	startInit sync.Once
@@ -180,7 +274,6 @@ func (s *ServerRaw) Start() error {
 		})
 
 		s.g.Go(func() error {
-
 			return nil
 		})
 	})
@@ -191,7 +284,9 @@ func (s *ServerRaw) Start() error {
 // Wait waits for the server to stop.
 // This happens when it gets disconnected from the client.
 func (s *ServerRaw) Wait() error {
-	s.checkStarted()
+	if !s.started {
+		panic("server not started")
+	}
 	err := s.g.Wait()
 	if s.onStop != nil {
 		s.onStop()
@@ -199,21 +294,14 @@ func (s *ServerRaw) Wait() error {
 	return err
 }
 
-func (s *ServerRaw) checkStarted() {
-	if !s.started {
-		panic("server not started")
-	}
-}
-
 // inputOutput reads messages from the stdin and calls the server's call function.
 // The response is written to stdout.
 func (s *ServerRaw) inputOutput() error {
-
 	// We currently treat all errors in here as stop signals.
 	// This means that the server will stop taking requests and
 	// needs to be restarted.
 	// Server implementations should communicate client error situations
-	// via the response message.
+	// via the messages.
 	var err error
 	for err == nil {
 		var header Header
@@ -226,22 +314,14 @@ func (s *ServerRaw) inputOutput() error {
 			break
 		}
 
-		var response Message
-		response, err = s.call(
-			s.dispatcher,
+		err = s.call(
 			Message{
 				Header: header,
 				Body:   body,
 			},
+			s.dispatcher,
 		)
-
 		if err != nil {
-			break
-		}
-
-		response.Header.Size = uint32(len(response.Body))
-
-		if err = response.Write(s.out); err != nil {
 			break
 		}
 
@@ -255,32 +335,75 @@ type ServerRawOptions struct {
 	// Call is the message exhcange between the client and server.
 	// Note that any error returned by this function will be treated as a fatal error and the server is stopped.
 	// Validation errors etc. should be returned in the response message.
-	// The Dispatcher can be used to send messages to the client outside of the request/response loop, e.g. log messages.
-	// Note that these messages must have ID 0.
-	Call func(Dispatcher, Message) (Message, error)
+	// Message passed to the Dispatcher as part of the request/response must
+	// use the same ID as the request.
+	// ID 0 is reserved for standalone messages (e.g. log messages).
+	Call func(Message, Dispatcher) error
 }
 
 type messageDispatcher struct {
 	s *ServerRaw
 }
 
-// Dispatcher is the interface for dispatching standalone messages to the client, e.g. log messages.
-type Dispatcher interface {
-	// Send sends one or more message back to the client.
-	// This is normally used for log messages and similar,
-	// and these messages should have a zero (0) ID.
-	Send(...Message) error
+// Call is the request/response exchange between the client and server.
+// Note that the stream parameter S is optional, set it to any if not used.
+type Call[Q, M, R any] struct {
+	Request           Q
+	messages          chan M
+	messagesRaw       chan Message
+	receiptFromServer R
+	receiptFinal      chan R
+	closed            bool
 }
 
-func (s *messageDispatcher) Send(messages ...Message) error {
-	for _, message := range messages {
-		if message.Header.ID != 0 {
-			return fmt.Errorf("message ID must be 0")
+// TODO1 delete me.
+type Receipt struct {
+	Identity
+}
+
+// SendRaw sends one or more messages back to the client
+// that is not part of the request/response exchange.
+// These messages must have ID 0.
+func (c *Call[Q, M, R]) SendRaw(ms ...Message) {
+	for _, m := range ms {
+		if m.Header.ID != 0 {
+			panic("message ID must be 0 for standalone messages")
 		}
-		message.Header.Size = uint32(len(message.Body))
-		if err := message.Write(s.s.out); err != nil {
-			return err
+		c.messagesRaw <- m
+	}
+}
+
+// Send finalizes the request/response exchange.
+// It returns a channel where the receipt can be read.
+func (c *Call[Q, M, R]) Send(rr ...M) {
+	for _, r := range rr {
+		c.messages <- r
+	}
+}
+
+func (c *Call[Q, M, R]) Close(r R) <-chan R {
+	c.receiptFromServer = r
+	c.close()
+	return c.receiptFinal
+}
+
+func (c *Call[Q, M, R]) close() {
+	close(c.messagesRaw)
+	close(c.messages)
+	c.closed = true
+}
+
+// Dispatcher is the interface for dispatching messages to the client.
+type Dispatcher interface {
+	// SendMessage sends one or more message back to the client.
+	SendMessage(...Message)
+}
+
+func (s *messageDispatcher) SendMessage(ms ...Message) {
+	for _, m := range ms {
+		m.Header.Size = uint32(len(m.Body))
+		if err := m.Write(s.s.out); err != nil {
+			panic(err)
 		}
 	}
-	return nil
 }
