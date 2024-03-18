@@ -9,15 +9,21 @@ import (
 func main() {
 	server, err := execrpc.NewServerRaw(
 		execrpc.ServerRawOptions{
-			Call: func(d execrpc.Dispatcher, message execrpc.Message) (execrpc.Message, error) {
-				return execrpc.Message{
-					Header: message.Header,
-					Body:   append([]byte("echo: "), message.Body...),
-				}, nil
+			Call: func(req execrpc.Message, d execrpc.Dispatcher) error {
+				header := req.Header
+				// execrpc.MessageStatusOK will complete the exchange.
+				// Setting it to execrpc.MessageStatusContinue will continue the conversation.
+				header.Status = execrpc.MessageStatusOK
+				d.SendMessage(
+					execrpc.Message{
+						Header: header,
+						Body:   append([]byte("echo: "), req.Body...),
+					},
+				)
+				return nil
 			},
 		},
 	)
-
 	if err != nil {
 		handleErr(err)
 	}
@@ -25,7 +31,6 @@ func main() {
 	if err := server.Start(); err != nil {
 		handleErr(err)
 	}
-	_ = server.Wait()
 }
 
 func handleErr(err error) {
