@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+option go_package = "github.com/bep/execrpc/examples/modelprotobuf";
+
+package modelprotobuf;
+
+message ExampleRequest {
+	string text = 2;
+}
+
+message ExampleMessage {
+    string hello = 1;
+
+}
+
+message ExampleReceipt {
+   Error error = 1;
+   Identity identity = 2;
+   string text = 3;
+
+}
+
+message Error {
+   string msg = 2;
+}
+
+message Identity {
+  int64 lastModified = 1;
+  string eTag = 2;
+  uint32 size  = 3;
+}

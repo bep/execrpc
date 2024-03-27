@@ -8,6 +8,7 @@ import (
 	"github.com/bep/execrpc"
 	"github.com/bep/execrpc/codecs"
 	"github.com/bep/execrpc/examples/model"
+	"github.com/bep/execrpc/examples/modelprotobuf"
 	qt "github.com/frankban/quicktest"
 	"golang.org/x/sync/errgroup"
 )
@@ -82,6 +83,41 @@ func newTestClient(t testing.TB, codec codecs.Codec, env ...string) *execrpc.Cli
 		t.Fatal(err)
 	}
 	return client
+}
+
+func TestExecTypedProtobuf(t *testing.T) {
+	c := qt.New(t)
+
+	client, err := execrpc.StartClient(
+		execrpc.ClientOptions[*modelprotobuf.ExampleRequest, *modelprotobuf.ExampleMessage, *modelprotobuf.ExampleReceipt]{
+			ClientRawOptions: execrpc.ClientRawOptions{
+				Version: 1,
+				Cmd:     "go",
+				Dir:     "./examples/servers/typedprotobuf",
+				Args:    []string{"run", "."},
+				Env:     nil,
+				Timeout: 4 * time.Second,
+			},
+			Codec: codecs.ProtobufCodec{},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := client.Execute(&modelprotobuf.ExampleRequest{Text: "world"})
+	c.Assert(result.Err(), qt.IsNil)
+	var i int
+	for m := range result.Messages() {
+		expect := fmt.Sprintf("%d: Hello world!", i)
+		c.Assert(m.Hello, qt.Equals, expect)
+		i++
+	}
+	c.Assert(i, qt.Equals, 1)
+	receipt := <-result.Receipt()
+	c.Assert(receipt.GetELastModified(), qt.Not(qt.Equals), int64(0))
+
+	c.Assert(client.Close(), qt.IsNil)
 }
 
 func TestExecTyped(t *testing.T) {

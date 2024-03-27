@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 // Codec defines the interface for a two way conversion between Q and R.
@@ -26,6 +27,8 @@ func ForName(name string) (Codec, error) {
 		return TOMLCodec{}, nil
 	case "json":
 		return JSONCodec{}, nil
+	case "protobuf":
+		return ProtobufCodec{}, nil
 	default:
 		return nil, ErrUnknownCodec
 	}
@@ -34,14 +37,14 @@ func ForName(name string) (Codec, error) {
 // TOMLCodec is a Codec that uses TOML as the underlying format.
 type TOMLCodec struct{}
 
-func (c TOMLCodec) Decode(b []byte, r any) error {
-	return toml.Unmarshal(b, r)
+func (c TOMLCodec) Decode(b []byte, v any) error {
+	return toml.Unmarshal(b, v)
 }
 
-func (c TOMLCodec) Encode(q any) ([]byte, error) {
+func (c TOMLCodec) Encode(v any) ([]byte, error) {
 	var b bytes.Buffer
 	enc := toml.NewEncoder(&b)
-	if err := enc.Encode(q); err != nil {
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
@@ -54,14 +57,30 @@ func (c TOMLCodec) Name() string {
 // JSONCodec is a Codec that uses JSON as the underlying format.
 type JSONCodec struct{}
 
-func (c JSONCodec) Decode(b []byte, r any) error {
-	return json.Unmarshal(b, r)
+func (c JSONCodec) Decode(b []byte, v any) error {
+	return json.Unmarshal(b, v)
 }
 
-func (c JSONCodec) Encode(q any) ([]byte, error) {
-	return json.Marshal(q)
+func (c JSONCodec) Encode(v any) ([]byte, error) {
+	return json.Marshal(v)
 }
 
 func (c JSONCodec) Name() string {
 	return "JSON"
+}
+
+type ProtobufCodec struct{}
+
+func (c ProtobufCodec) Decode(b []byte, v any) error {
+	message := v.(proto.Message)
+	return proto.Unmarshal(b, message)
+}
+
+func (c ProtobufCodec) Encode(v any) ([]byte, error) {
+	message := v.(proto.Message)
+	return proto.Marshal(message)
+}
+
+func (c ProtobufCodec) Name() string {
+	return "Protobuf"
 }

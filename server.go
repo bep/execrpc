@@ -6,6 +6,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 
@@ -44,7 +45,7 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 }
 
 // NewServer creates a new Server. using the given options.
-func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], error) {
+func NewServer[Q, M, R any](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], error) {
 	if opts.Handle == nil {
 		return nil, fmt.Errorf("opts: Handle function is required")
 	}
@@ -119,8 +120,8 @@ func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R
 
 		var checksum string
 
-		for r := range call.messages {
-			b, err := opts.Codec.Encode(r)
+		for m := range call.messages {
+			b, err := opts.Codec.Encode(m)
 			h := message.Header
 			h.Status = MessageStatusContinue
 			m := createMessage(b, err, h, MessageStatusErrEncodeFailed)
@@ -184,6 +185,21 @@ func createMessage(b []byte, err error, h Header, failureStatus uint16) Message 
 		}
 	}
 	return m
+}
+
+func makeNew[T any](v T) T {
+	return makeNewFunc(v)().(T)
+}
+
+func makeNewFunc[T any](v T) func() any {
+	if typ := reflect.TypeOf(v); typ.Kind() == reflect.Ptr {
+		elem := typ.Elem()
+		return func() any {
+			return reflect.New(elem).Interface() // must use reflect
+		}
+	} else {
+		return func() any { return new(T) } // v is not ptr, alloc with new
+	}
 }
 
 // ServerOptions is the options for a server.
