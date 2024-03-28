@@ -25,6 +25,7 @@ func main() {
 		sendLogMessage           = os.Getenv("EXECRPC_SEND_TWO_LOG_MESSAGES") != ""
 		noClose                  = os.Getenv("EXECRPC_NO_CLOSE") != ""
 		numMessagesStr           = os.Getenv("EXECRPC_NUM_MESSAGES")
+		noHasher                 = os.Getenv("EXECRPC_NO_HASHER") != ""
 		numMessages              = 1
 	)
 
@@ -39,8 +40,12 @@ func main() {
 		fmt.Println("Printing outside server before")
 	}
 
-	getHasher := func() hash.Hash {
-		return fnv.New64a()
+	var getHasher func() hash.Hash
+
+	if !noHasher {
+		getHasher = func() hash.Hash {
+			return fnv.New64a()
+		}
 	}
 
 	server, err := execrpc.NewServer(

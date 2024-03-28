@@ -85,9 +85,7 @@ func newTestClient(t testing.TB, codec codecs.Codec, env ...string) *execrpc.Cli
 	return client
 }
 
-func TestExecTypedProtobuf(t *testing.T) {
-	c := qt.New(t)
-
+func newTestClientProtobuf(t testing.TB, env ...string) *execrpc.Client[*modelprotobuf.ExampleRequest, *modelprotobuf.ExampleMessage, *modelprotobuf.ExampleReceipt] {
 	client, err := execrpc.StartClient(
 		execrpc.ClientOptions[*modelprotobuf.ExampleRequest, *modelprotobuf.ExampleMessage, *modelprotobuf.ExampleReceipt]{
 			ClientRawOptions: execrpc.ClientRawOptions{
@@ -95,7 +93,7 @@ func TestExecTypedProtobuf(t *testing.T) {
 				Cmd:     "go",
 				Dir:     "./examples/servers/typedprotobuf",
 				Args:    []string{"run", "."},
-				Env:     nil,
+				Env:     env,
 				Timeout: 4 * time.Second,
 			},
 			Codec: codecs.ProtobufCodec{},
@@ -104,6 +102,13 @@ func TestExecTypedProtobuf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return client
+}
+
+func TestExecTypedProtobuf(t *testing.T) {
+	c := qt.New(t)
+
+	client := newTestClientProtobuf(c)
 
 	result := client.Execute(&modelprotobuf.ExampleRequest{Text: "world"})
 	c.Assert(result.Err(), qt.IsNil)
@@ -327,4 +332,31 @@ func BenchmarkClient(b *testing.B) {
 
 	runBenchmarksForCodec(codecs.JSONCodec{})
 	runBenchmarksForCodec(codecs.TOMLCodec{})
+}
+
+func BenchmarkProtobuf(b *testing.B) {
+	const word = "World"
+
+	runBenchmark := func(name string, env ...string) {
+		b.Run(name, func(b *testing.B) {
+			client := newTestClientProtobuf(b, env...)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				result := client.Execute(&modelprotobuf.ExampleRequest{Text: word})
+				if err := result.Err(); err != nil {
+					b.Fatal(err)
+				}
+				for range result.Messages() {
+				}
+				<-result.Receipt()
+				if err := result.Err(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+
+	runBenchmark("1 message")
+	runBenchmark("100 messages", "EXECRPC_NUM_MESSAGES=100")
+	runBenchmark("100 messages, no hasher", "EXECRPC_NUM_MESSAGES=100", "EXECRPC_NO_HASHER=true")
 }

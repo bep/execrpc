@@ -104,6 +104,11 @@ func (c *Client[Q, M, R]) Execute(r Q) Result[M, R] {
 		return result
 	}
 
+	var mm M
+	createZeroM := makeZeroValueAndPointerToZeroValue(mm)
+	var rr R
+	createZeroR := makeZeroValueAndPointerToZeroValue(rr)
+
 	go func() {
 		defer func() {
 			result.close()
@@ -125,22 +130,24 @@ func (c *Client[Q, M, R]) Execute(r Q) Result[M, R] {
 			}
 
 			if message.Header.Status == MessageStatusContinue {
-				var resp M
-				err = c.opts.Codec.Decode(message.Body, &resp)
+				mv, v := createZeroM()
+				m := mv.(M)
+				err = c.opts.Codec.Decode(message.Body, v)
 				if err != nil {
 					result.errc <- err
 					return
 				}
-				result.messages <- resp
+				result.messages <- m
 			} else {
 				// Receipt.
-				var rec R
-				err = c.opts.Codec.Decode(message.Body, &rec)
+				rv, v := createZeroR()
+				r := rv.(R)
+				err = c.opts.Codec.Decode(message.Body, v)
 				if err != nil {
 					result.errc <- err
 					return
 				}
-				result.receipt <- rec
+				result.receipt <- r
 				return
 			}
 

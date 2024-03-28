@@ -61,9 +61,14 @@ func NewServer[Q, M, R any](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], erro
 
 	var rawServer *ServerRaw
 
+	var qq Q
+	createZero := makeZeroValueAndPointerToZeroValue(qq)
+
 	callRaw := func(message Message, d Dispatcher) error {
-		var q Q
-		err := opts.Codec.Decode(message.Body, &q)
+		qv, v := createZero()
+		q := qv.(Q)
+
+		err := opts.Codec.Decode(message.Body, v)
 		if err != nil {
 			m := Message{
 				Header: message.Header,
@@ -134,7 +139,9 @@ func NewServer[Q, M, R any](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], erro
 		if shouldHash {
 			checksum = hex.EncodeToString(hasher.Sum(nil))
 		}
-		setReceiptValuesIfNotSet(size, checksum, &call.receiptFromServer)
+
+		// TODO1 is pointer or not.
+		setReceiptValuesIfNotSet(size, checksum, call.receiptFromServer)
 
 		return nil
 	}
@@ -152,6 +159,18 @@ func NewServer[Q, M, R any](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], erro
 	return &Server[Q, M, R]{
 		ServerRaw: rawServer,
 	}, nil
+}
+
+func makeZeroValueAndPointerToZeroValue[T any](v T) func() (any, any) {
+	if typ := reflect.TypeOf(v); typ.Kind() == reflect.Ptr {
+		elem := typ.Elem()
+		return func() (any, any) {
+			vv := reflect.New(elem).Interface()
+			return vv, vv
+		}
+	} else {
+		return func() (any, any) { return v, &v }
+	}
 }
 
 func setReceiptValuesIfNotSet(size uint32, checksum string, r any) {
@@ -185,21 +204,6 @@ func createMessage(b []byte, err error, h Header, failureStatus uint16) Message 
 		}
 	}
 	return m
-}
-
-func makeNew[T any](v T) T {
-	return makeNewFunc(v)().(T)
-}
-
-func makeNewFunc[T any](v T) func() any {
-	if typ := reflect.TypeOf(v); typ.Kind() == reflect.Ptr {
-		elem := typ.Elem()
-		return func() any {
-			return reflect.New(elem).Interface() // must use reflect
-		}
-	} else {
-		return func() any { return new(T) } // v is not ptr, alloc with new
-	}
 }
 
 // ServerOptions is the options for a server.
