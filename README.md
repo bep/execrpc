@@ -130,6 +130,8 @@ func main() {
 				receipt.Size = uint32(123)
 
 				// Close the message stream.
+				// Pass true to drop any queued messages,
+				// this is only relevant if DelayDelivery is enabled.
 				c.Close(false, receipt)
 			},
 		},
@@ -152,7 +154,7 @@ The server can generate an ETag for the messages. This is a hash of all message 
 To enable this:
 
 1. Provide a `GetHasher` function to the [server options](https://pkg.go.dev/github.com/bep/execrpc#ServerOptions).
-2. Have the `Receipt` implement the [ETagger](https://pkg.go.dev/github.com/bep/execrpc#ETagger) interface.
+2. Have the `Receipt` implement the [TagProvider](https://pkg.go.dev/github.com/bep/execrpc#TagProvider) interface.
 
 Note that there are three different optional E-interfaces for the `Receipt`:
 

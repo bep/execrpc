@@ -7,8 +7,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"sync/atomic"
-	"time"
 
 	"github.com/bep/execrpc"
 	"github.com/bep/execrpc/examples/model"
@@ -101,23 +99,9 @@ func main() {
 				if !noClose {
 					var receipt model.ExampleReceipt
 					if !noReadingReceipt {
-						var receiptSeen atomic.Bool
-						go func() {
-							time.Sleep(1 * time.Second)
-							if !receiptSeen.Load() {
-								log.Fatalf("expected receipt to be seen")
-							}
-						}()
-
 						receipt = <-c.Receipt()
 						receipt.Text = "echoed: " + c.Request.Text
 						receipt.Size = uint32(123)
-
-						receiptSeen.Store(true)
-
-						if getHasher != nil && receipt.ETag == "" {
-							log.Fatalf("expected receipt eTag to be set")
-						}
 					}
 
 					c.Close(dropMessages, receipt)

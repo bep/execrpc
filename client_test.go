@@ -117,6 +117,8 @@ func TestExecTyped(t *testing.T) {
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
 		c.Assert(receipt.GetESize(), qt.Equals, uint32(123))
+		c.Assert(receipt.ETag, qt.Equals, "2d5537627636b58a")
+		c.Assert(receipt.Text, qt.Equals, "echoed: world")
 	})
 
 	c.Run("100 messages", func(c *qt.C) {
@@ -126,6 +128,7 @@ func TestExecTyped(t *testing.T) {
 		receipt := <-result.Receipt()
 		c.Assert(receipt.LastModified, qt.Not(qt.Equals), int64(0))
 		c.Assert(receipt.ETag, qt.Equals, "15b8164b761923b7")
+		c.Assert(receipt.Text, qt.Equals, "echoed: world")
 	})
 
 	c.Run("1234 messages", func(c *qt.C) {
@@ -136,6 +139,7 @@ func TestExecTyped(t *testing.T) {
 		c.Assert(result.Err(), qt.IsNil)
 		c.Assert(receipt.LastModified, qt.Not(qt.Equals), int64(0))
 		c.Assert(receipt.ETag, qt.Equals, "43940b97841cc686")
+		c.Assert(receipt.Text, qt.Equals, "echoed: world")
 	})
 
 	c.Run("Delay delivery", func(c *qt.C) {
@@ -144,6 +148,7 @@ func TestExecTyped(t *testing.T) {
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
 		c.Assert(receipt.GetESize(), qt.Equals, uint32(123))
+		c.Assert(receipt.Text, qt.Equals, "echoed: world")
 	})
 
 	c.Run("Delay delivery, drop messages", func(c *qt.C) {
@@ -154,6 +159,8 @@ func TestExecTyped(t *testing.T) {
 		// This is a little confusing. We always get a receipt even if the messages are dropped,
 		// and the server can create whatever protocol it wants.
 		c.Assert(receipt.GetESize(), qt.Equals, uint32(123))
+		c.Assert(receipt.ETag, qt.Equals, "2d5537627636b58a")
+		c.Assert(receipt.Text, qt.Equals, "echoed: world")
 	})
 
 	c.Run("No Close", func(c *qt.C) {
