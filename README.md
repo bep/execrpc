@@ -7,56 +7,67 @@ This library implements a simple, custom [RPC protocol](https://en.wikipedia.org
 A strongly typed client may look like this:
 
 ```go
-// Define the request, message and receipt types for the RPC call.
-client, err := execrpc.StartClient(
+package main
+
+import (
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/bep/execrpc"
+	"github.com/bep/execrpc/codecs"
+	"github.com/bep/execrpc/examples/model"
+)
+
+func main() {
+	// Define the request, message and receipt types for the RPC call.
+	client, err := execrpc.StartClient(
 		execrpc.ClientOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 			ClientRawOptions: execrpc.ClientRawOptions{
 				Version: 1,
 				Cmd:     "go",
 				Dir:     "./examples/servers/typed",
 				Args:    []string{"run", "."},
-				Env:     env,
+				Env:     nil,
 				Timeout: 30 * time.Second,
 			},
-			Codec: codec,
+			Codec: codecs.JSONCodec{},
 		},
 	)
-
-if err != nil {
-		logg.Fatal(err)
-}
-
-
-// Consume standalone messages (e.g. log messages) in its own goroutine.
-go func() {
-	for msg := range client.MessagesRaw() {
-		fmt.Println("got message", string(msg.Body))
+	if err != nil {
+		log.Fatal(err)
 	}
-}()
 
-// Execute the request.
-result := client.Execute(model.ExampleRequest{Text: "world"})
+	// Consume standalone messages (e.g. log messages) in its own goroutine.
+	go func() {
+		for msg := range client.MessagesRaw() {
+			fmt.Println("got message", string(msg.Body))
+		}
+	}()
 
-// Check for errors.
-if  err; result.Err(); err != nil {
-	logg.Fatal(err)
+	// Execute the request.
+	result := client.Execute(model.ExampleRequest{Text: "world"})
+
+	// Check for errors.
+	if err := result.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Consume the messages.
+	for m := range result.Messages() {
+		fmt.Println(m)
+	}
+
+	// Wait for the receipt.
+	receipt := <-result.Receipt()
+
+	// Check again for errors.
+	if err := result.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(receipt.Text)
 }
-
-// Consume the messages.
-for m := range result.Messages() {
-	fmt.Println(m)
-}
-
-// Wait for the receipt.
-receipt := result.Receipt()
-
-// Check again for errors.
-if  err; result.Err(); err != nil {
-	logg.Fatal(err)
-}
-
-fmt.Println(receipt.Text)
-
 ```
 
 To get the best performance you should keep the client open as long as its needed – and store it as a shared object; it's safe and encouraged to call `Execute` from multiple goroutines.
