@@ -134,6 +134,23 @@ func main() {
 }
 ```
 
+## Generate ETag
+
+The server can generate an ETag for the messages. This is a hash of all message bodies. 
+
+To enable this:
+
+1. Provide a `GetHasher` function to the [server options](https://pkg.go.dev/github.com/bep/execrpc#ServerOptions).
+2. Have the `Receipt` implement the [ETagger](https://pkg.go.dev/github.com/bep/execrpc#ETagger) interface.
+
+Note that there are three different optional E-interfaces for the `Receipt`:
+
+1. [TagProvider](https://pkg.go.dev/github.com/bep/execrpc#TagProvider) for the ETag.
+2. [SizeProvider](https://pkg.go.dev/github.com/bep/execrpc#SizeProvider) for the size.
+3. [LastModifiedProvider](https://pkg.go.dev/github.com/bep/execrpc#LastModifiedProvider) for the last modified timestamp.
+
+A convenient struct that can be embedded in your `Receipt` that implements all of these is the [Identity](https://pkg.go.dev/github.com/bep/execrpc#Identity).
+
 ## Status Codes
 
 The status codes in the header between 1 and 99 are reserved for the system. This will typically be used to catch decoding/encoding errors on the server.
