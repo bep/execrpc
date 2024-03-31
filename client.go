@@ -227,7 +227,6 @@ func (c *ClientRaw) Close() error {
 	if c == nil {
 		return nil
 	}
-	defer close(c.Messages)
 
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -240,6 +239,8 @@ func (c *ClientRaw) Close() error {
 	c.closing = true
 
 	err := c.conn.Close()
+
+	close(c.Messages)
 
 	return err
 }
@@ -316,16 +317,17 @@ func (c *ClientRaw) input() {
 			break
 		}
 
+		c.mu.Lock()
 		id := message.Header.ID
 		if id == 0 {
 			// A message with ID 0 is a standalone message (e.g. log message)
 			// and not part of the request-response flow.
 			c.Messages <- message
+			c.mu.Unlock()
 			continue
 		}
 
 		// Attach it to the correct pending call.
-		c.mu.Lock()
 		call, found := c.pending[id]
 		if !found {
 			panic(fmt.Sprintf("call with ID %d not found", id))
@@ -337,12 +339,13 @@ func (c *ClientRaw) input() {
 		}
 
 		delete(c.pending, id)
-		c.mu.Unlock()
 		if call == nil {
 			err = fmt.Errorf("call with ID %d not found", id)
+			c.mu.Unlock()
 			break
 		}
 		call.Messages <- message
+		c.mu.Unlock()
 		call.done()
 	}
 
