@@ -2,6 +2,24 @@ package model
 
 import "github.com/bep/execrpc"
 
+type ExampleConfig struct {
+	// Used in tests.
+	CallShouldFail   bool `json:"callShouldFail"`
+	SendLogMessage   bool `json:"sendLogMessage"`
+	NoClose          bool `json:"noClose"`
+	NoReadingReceipt bool `json:"noReadingReceipt"`
+	DropMessages     bool `json:"dropMessages"`
+	NumMessages      int  `json:"numMessages"`
+}
+
+func (cfg *ExampleConfig) Init() error {
+	if cfg.NumMessages < 1 {
+		cfg.NumMessages = 1
+	}
+
+	return nil
+}
+
 // ExampleRequest is just a simple example request.
 type ExampleRequest struct {
 	Text string `json:"text"`
