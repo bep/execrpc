@@ -6,6 +6,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/bep/execrpc/codecs"
@@ -19,10 +20,15 @@ const (
 	// MessageStatusContinue is the status code for a message that should continue the conversation.
 	MessageStatusContinue
 
+	// MessageStatusInitServer is the status code for a message used to initialize/configure the server.
+	MessageStatusInitServer
+
 	// MessageStatusErrDecodeFailed is the status code for a message that failed to decode.
 	MessageStatusErrDecodeFailed
 	// MessageStatusErrEncodeFailed is the status code for a message that failed to encode.
 	MessageStatusErrEncodeFailed
+	// MessageStatusErrInitServerFailed is the status code for a message that failed to initialize the server.
+	MessageStatusErrInitServerFailed
 
 	// MessageStatusSystemReservedMax is the maximum value for a system reserved status code.
 	MessageStatusSystemReservedMax = 99
@@ -36,14 +42,14 @@ func NewServerRaw(opts ServerRawOptions) (*ServerRaw, error) {
 	s := &ServerRaw{
 		call: opts.Call,
 	}
-	s.dispatcher = messageDispatcher{
+	s.dispatcher = &messageDispatcher{
 		s: s,
 	}
 	return s, nil
 }
 
 // NewServer creates a new Server. using the given options.
-func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R], error) {
+func NewServer[C, Q, M, R any](opts ServerOptions[C, Q, M, R]) (*Server[C, Q, M, R], error) {
 	if opts.Handle == nil {
 		return nil, fmt.Errorf("opts: Handle function is required")
 	}
@@ -63,14 +69,39 @@ func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R
 	)
 
 	callRaw := func(message Message, d Dispatcher) error {
+		if message.Header.Status == MessageStatusInitServer {
+			if opts.Init == nil {
+				m := createErrorMessage(fmt.Errorf("opts: Init function is required"), message.Header, MessageStatusErrInitServerFailed)
+				d.SendMessage(m)
+				return nil
+			}
+
+			var cfg C
+			err := opts.Codec.Decode(message.Body, &cfg)
+			if err != nil {
+				m := createErrorMessage(err, message.Header, MessageStatusErrDecodeFailed)
+				d.SendMessage(m)
+				return nil
+			}
+
+			if err := opts.Init(cfg); err != nil {
+				m := createErrorMessage(err, message.Header, MessageStatusErrInitServerFailed)
+				d.SendMessage(m)
+				return nil
+			}
+
+			// OK.
+			var receipt Message
+			receipt.Header = message.Header
+			receipt.Header.Status = MessageStatusOK
+			d.SendMessage(receipt)
+			return nil
+		}
+
 		var q Q
 		err := opts.Codec.Decode(message.Body, &q)
 		if err != nil {
-			m := Message{
-				Header: message.Header,
-				Body:   []byte(fmt.Sprintf("failed to decode request: %s. Check that client and server uses the same codec.", err)),
-			}
-			m.Header.Status = MessageStatusErrDecodeFailed
+			m := createErrorMessage(err, message.Header, MessageStatusErrDecodeFailed)
 			d.SendMessage(m)
 			return nil
 		}
@@ -135,6 +166,9 @@ func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R
 			b, err := opts.Codec.Encode(m)
 			h := message.Header
 			h.Status = MessageStatusContinue
+			if h.ID == 0 {
+				panic("message ID must not be 0 for request/response messages")
+			}
 			m := createMessage(b, err, h, MessageStatusErrEncodeFailed)
 			if opts.DelayDelivery {
 				messageBuff = append(messageBuff, m)
@@ -168,7 +202,7 @@ func NewServer[Q, M, R comparable](opts ServerOptions[Q, M, R]) (*Server[Q, M, R
 		return nil, err
 	}
 
-	s := &Server[Q, M, R]{
+	s := &Server[C, Q, M, R]{
 		messagesRaw: messagesRaw,
 		ServerRaw:   rawServer,
 	}
@@ -202,11 +236,7 @@ func setReceiptValuesIfNotSet(size uint32, checksum string, r any) {
 func createMessage(b []byte, err error, h Header, failureStatus uint16) Message {
 	var m Message
 	if err != nil {
-		m = Message{
-			Header: h,
-			Body:   []byte(fmt.Sprintf("failed create message: %s. Check that client and server uses the same codec.", err)),
-		}
-		m.Header.Status = failureStatus
+		return createErrorMessage(err, h, failureStatus)
 	} else {
 		m = Message{
 			Header: h,
@@ -216,8 +246,26 @@ func createMessage(b []byte, err error, h Header, failureStatus uint16) Message 
 	return m
 }
 
+func createErrorMessage(err error, h Header, failureStatus uint16) Message {
+	var additionalMsg string
+	if failureStatus == MessageStatusErrDecodeFailed || failureStatus == MessageStatusErrEncodeFailed {
+		additionalMsg = " Check that client and server uses the same codec."
+	}
+	m := Message{
+		Header: h,
+		Body:   []byte(fmt.Sprintf("failed create message (error code %d): %s.%s", failureStatus, err, additionalMsg)),
+	}
+	m.Header.Status = failureStatus
+	return m
+}
+
 // ServerOptions is the options for a server.
-type ServerOptions[Q, M, R any] struct {
+type ServerOptions[C, Q, M, R any] struct {
+	// Init is the function that will be called when the server is started.
+	// It can be used to initialize the server with the given configuration.
+	// If an error is returned, the server will stop.
+	Init func(C) error
+
 	// Handle is the function that will be called when a request is received.
 	Handle func(*Call[Q, M, R])
 
@@ -237,12 +285,12 @@ type ServerOptions[Q, M, R any] struct {
 }
 
 // Server is a stringly typed server for requests of type Q and responses of tye R.
-type Server[Q, M, R any] struct {
+type Server[C, Q, M, R any] struct {
 	messagesRaw chan Message
 	*ServerRaw
 }
 
-func (s *Server[Q, M, R]) Start() error {
+func (s *Server[C, Q, M, R]) Start() error {
 	err := s.ServerRaw.Start()
 
 	// Close the standalone message channel.
@@ -259,7 +307,7 @@ func (s *Server[Q, M, R]) Start() error {
 // See Server for a generic, typed version.
 type ServerRaw struct {
 	call       func(Message, Dispatcher) error
-	dispatcher messageDispatcher
+	dispatcher *messageDispatcher
 
 	started bool
 	onStop  func()
@@ -375,7 +423,8 @@ type ServerRawOptions struct {
 }
 
 type messageDispatcher struct {
-	s *ServerRaw
+	mu sync.Mutex
+	s  *ServerRaw
 }
 
 // Call is the request/response exchange between the client and server.
@@ -436,7 +485,9 @@ type Dispatcher interface {
 	SendMessage(...Message)
 }
 
-func (s messageDispatcher) SendMessage(ms ...Message) {
+func (s *messageDispatcher) SendMessage(ms ...Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, m := range ms {
 		m.Header.Size = uint32(len(m.Body))
 		if err := m.Write(s.s.out); err != nil {

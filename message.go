@@ -31,6 +31,7 @@ func (m *Message) Write(w io.Writer) error {
 
 // Header is the header of a message.
 // ID and Size are set by the system.
+// Status may be set by the system.
 type Header struct {
 	ID      uint32
 	Version uint16

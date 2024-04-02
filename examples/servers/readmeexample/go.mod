@@ -1,4 +1,4 @@
-module github.com/bep/execrpc/examples/servers/raw
+module github.com/bep/execrpc/examples/servers/readmeexample
 
 go 1.21
 

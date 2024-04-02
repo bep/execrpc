@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func TestExecRaw(t *testing.T) {
+func TestRaw(t *testing.T) {
 	c := qt.New(t)
 
 	newClient := func(c *qt.C) *execrpc.ClientRaw {
@@ -35,7 +35,7 @@ func TestExecRaw(t *testing.T) {
 		messages := make(chan execrpc.Message)
 		var g errgroup.Group
 		g.Go(func() error {
-			return client.Execute([]byte("hello"), messages)
+			return client.Execute(func(m *execrpc.Message) { m.Body = []byte("hello") }, messages)
 		})
 		var i int
 		for msg := range messages {
@@ -49,7 +49,7 @@ func TestExecRaw(t *testing.T) {
 	})
 }
 
-func TestExecStartFailed(t *testing.T) {
+func TestStartFailed(t *testing.T) {
 	c := qt.New(t)
 	client, err := execrpc.StartClientRaw(
 		execrpc.ClientRawOptions{
@@ -64,18 +64,19 @@ func TestExecStartFailed(t *testing.T) {
 	c.Assert(client.Close(), qt.IsNil)
 }
 
-func newTestClient(t testing.TB, codec codecs.Codec, env ...string) *execrpc.Client[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt] {
+func newTestClientForServer(t testing.TB, server string, codec codecs.Codec, cfg model.ExampleConfig, env ...string) *execrpc.Client[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt] {
 	client, err := execrpc.StartClient(
-		execrpc.ClientOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
+		execrpc.ClientOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 			ClientRawOptions: execrpc.ClientRawOptions{
 				Version: 1,
 				Cmd:     "go",
-				Dir:     "./examples/servers/typed",
+				Dir:     "./examples/servers/" + server,
 				Args:    []string{"run", "."},
 				Env:     env,
 				Timeout: 30 * time.Second,
 			},
-			Codec: codec,
+			Config: cfg,
+			Codec:  codec,
 		},
 	)
 	if err != nil {
@@ -84,17 +85,23 @@ func newTestClient(t testing.TB, codec codecs.Codec, env ...string) *execrpc.Cli
 
 	t.Cleanup(func() {
 		if err := client.Close(); err != nil {
-			t.Fatal(err)
+			if err != execrpc.ErrShutdown {
+				t.Fatal(err)
+			}
 		}
 	})
 
 	return client
 }
 
-func TestExecTyped(t *testing.T) {
+func newTestClient(t testing.TB, codec codecs.Codec, cfg model.ExampleConfig, env ...string) *execrpc.Client[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt] {
+	return newTestClientForServer(t, "typed", codec, cfg, env...)
+}
+
+func TestTyped(t *testing.T) {
 	c := qt.New(t)
 
-	runBasicTestForClient := func(c *qt.C, client *execrpc.Client[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]) execrpc.Result[model.ExampleMessage, model.ExampleReceipt] {
+	runBasicTestForClient := func(c *qt.C, client *execrpc.Client[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]) execrpc.Result[model.ExampleMessage, model.ExampleReceipt] {
 		result := client.Execute(model.ExampleRequest{Text: "world"})
 		c.Assert(result.Err(), qt.IsNil)
 		return result
@@ -112,7 +119,7 @@ func TestExecTyped(t *testing.T) {
 	}
 
 	c.Run("One message", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{})
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -122,7 +129,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("100 messages", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NUM_MESSAGES=100")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{NumMessages: 100})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 100)
 		receipt := <-result.Receipt()
@@ -132,7 +139,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("1234 messages", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NUM_MESSAGES=1234")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{NumMessages: 1234}, "EXECRPC_NUM_MESSAGES=1234")
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1234)
 		receipt := <-result.Receipt()
@@ -143,7 +150,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("Delay delivery", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_DELAY_DELIVERY=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_DELAY_DELIVERY=true")
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -152,7 +159,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("Delay delivery, drop messages", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_DELAY_DELIVERY=true", "EXECRPC_DROP_MESSAGES=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{DropMessages: true}, "EXECRPC_DELAY_DELIVERY=true")
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 0)
 		receipt := <-result.Receipt()
@@ -164,7 +171,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("No Close", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NO_CLOSE=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{NoClose: true})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -173,7 +180,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("Receipt", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{})
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -186,7 +193,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("No hasher", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NO_HASHER=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_NO_HASHER=true")
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -194,7 +201,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("No reading Receipt", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NO_READING_RECEIPT=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{NoReadingReceipt: true})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -203,7 +210,7 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("No reading Receipt, no Close", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_NO_READING_RECEIPT=true", "EXECRPC_NO_CLOSE=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{NoClose: true, NoReadingReceipt: true})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 		receipt := <-result.Receipt()
@@ -215,16 +222,16 @@ func TestExecTyped(t *testing.T) {
 		var logMessages []execrpc.Message
 
 		client, err := execrpc.StartClient(
-			execrpc.ClientOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
+			execrpc.ClientOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 				ClientRawOptions: execrpc.ClientRawOptions{
 					Version: 1,
 					Cmd:     "go",
 					Dir:     "./examples/servers/typed",
 					Args:    []string{"run", "."},
-					Env:     []string{"EXECRPC_SEND_TWO_LOG_MESSAGES=true"},
 					Timeout: 30 * time.Second,
 				},
-				Codec: codecs.JSONCodec{},
+				Config: model.ExampleConfig{SendLogMessage: true},
+				Codec:  codecs.JSONCodec{},
 			},
 		)
 		if err != nil {
@@ -249,13 +256,13 @@ func TestExecTyped(t *testing.T) {
 	})
 
 	c.Run("TOML", func(c *qt.C) {
-		client := newTestClient(c, codecs.TOMLCodec{})
+		client := newTestClient(c, codecs.TOMLCodec{}, model.ExampleConfig{})
 		result := runBasicTestForClient(c, client)
 		assertMessages(c, result, 1)
 	})
 
 	c.Run("Error in receipt", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_CALL_SHOULD_FAIL=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{CallShouldFail: true})
 		result := client.Execute(model.ExampleRequest{Text: "hello"})
 		c.Assert(result.Err(), qt.IsNil)
 		receipt := <-result.Receipt()
@@ -266,28 +273,60 @@ func TestExecTyped(t *testing.T) {
 	// The "stdout print tests" are just to make sure that the server behaves and does not hang.
 
 	c.Run("Print to stdout outside server before", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE=true")
 		runBasicTestForClient(c, client)
 	})
 
 	c.Run("Print to stdout inside server", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_PRINT_INSIDE_SERVER=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_PRINT_INSIDE_SERVER=true")
 		runBasicTestForClient(c, client)
 	})
 
 	c.Run("Print to stdout outside server before", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_PRINT_OUTSIDE_SERVER_BEFORE=true")
 		runBasicTestForClient(c, client)
 	})
 
 	c.Run("Print to stdout inside after", func(c *qt.C) {
-		client := newTestClient(c, codecs.JSONCodec{}, "EXECRPC_PRINT_OUTSIDE_SERVER_AFTER=true")
+		client := newTestClient(c, codecs.JSONCodec{}, model.ExampleConfig{}, "EXECRPC_PRINT_OUTSIDE_SERVER_AFTER=true")
 		runBasicTestForClient(c, client)
 	})
 }
 
-func TestExecTypedConcurrent(t *testing.T) {
-	client := newTestClient(t, codecs.JSONCodec{})
+// Make sure that the README example compiles and runs.
+func TestReadmeExample(t *testing.T) {
+	c := qt.New(t)
+
+	client := newTestClientForServer(c, "readmeexample", codecs.JSONCodec{}, model.ExampleConfig{})
+	var wg errgroup.Group
+	wg.Go(func() error {
+		for msg := range client.MessagesRaw() {
+			s := string(msg.Body)
+			msg := fmt.Sprintf("got message: %s id: %d status: %d header size: %d actual size: %d", s, msg.Header.ID, msg.Header.Status, msg.Header.Size, len(s))
+			if s != "log message" {
+				return fmt.Errorf("unexpected message: %s", msg)
+			}
+		}
+		return nil
+	})
+	result := client.Execute(model.ExampleRequest{Text: "world"})
+	c.Assert(result.Err(), qt.IsNil)
+	var hellos []string
+	for m := range result.Messages() {
+		hellos = append(hellos, m.Hello)
+	}
+	c.Assert(hellos, qt.DeepEquals, []string{"Hello 1!", "Hello 2!", "Hello 3!"})
+	receipt := <-result.Receipt()
+	c.Assert(receipt.LastModified, qt.Not(qt.Equals), int64(0))
+	c.Assert(receipt.ETag, qt.Equals, "44af821b6bd180d0")
+	c.Assert(receipt.Text, qt.Equals, "echoed: world")
+	c.Assert(result.Err(), qt.IsNil)
+	c.Assert(client.Close(), qt.IsNil)
+	c.Assert(wg.Wait(), qt.IsNil)
+}
+
+func TestTypedConcurrent(t *testing.T) {
+	client := newTestClient(t, codecs.JSONCodec{}, model.ExampleConfig{})
 	var g errgroup.Group
 
 	for i := 0; i < 100; i++ {
@@ -324,9 +363,9 @@ func TestExecTypedConcurrent(t *testing.T) {
 func BenchmarkClient(b *testing.B) {
 	const word = "World"
 
-	runBenchmark := func(name string, codec codecs.Codec, env ...string) {
+	runBenchmark := func(name string, codec codecs.Codec, cfg model.ExampleConfig, env ...string) {
 		b.Run(name, func(b *testing.B) {
-			client := newTestClient(b, codec, env...)
+			client := newTestClient(b, codec, cfg, env...)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
 					result := client.Execute(model.ExampleRequest{Text: word})
@@ -344,11 +383,12 @@ func BenchmarkClient(b *testing.B) {
 		})
 	}
 
-	runBenchmarksForCodec := func(codec codecs.Codec) {
-		runBenchmark("1 message "+codec.Name(), codec)
-		runBenchmark("100 messages "+codec.Name(), codec, "EXECRPC_NUM_MESSAGES=100")
+	runBenchmarksForCodec := func(codec codecs.Codec, cfg model.ExampleConfig) {
+		runBenchmark("1 message "+codec.Name(), codec, cfg)
+		cfg.NumMessages = 100
+		runBenchmark("100 messages "+codec.Name(), codec, cfg)
 	}
-	runBenchmarksForCodec(codecs.JSONCodec{})
-	runBenchmark("100 messages JSON, no hasher ", codecs.JSONCodec{}, "EXECRPC_NUM_MESSAGES=100", "EXECRPC_NO_HASHER=true")
-	runBenchmarksForCodec(codecs.TOMLCodec{})
+	runBenchmarksForCodec(codecs.JSONCodec{}, model.ExampleConfig{})
+	runBenchmark("100 messages JSON, no hasher ", codecs.JSONCodec{}, model.ExampleConfig{NumMessages: 100}, "EXECRPC_NO_HASHER=true")
+	runBenchmarksForCodec(codecs.TOMLCodec{}, model.ExampleConfig{})
 }

@@ -7,66 +7,60 @@ This library implements a simple, custom [RPC protocol](https://en.wikipedia.org
 A strongly typed client may look like this:
 
 ```go
-package main
-
-import (
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/bep/execrpc"
-	"github.com/bep/execrpc/codecs"
-	"github.com/bep/execrpc/examples/model"
+// Define the request, message and receipt types for the RPC call.
+client, err := execrpc.StartClient(
+	client, err := execrpc.StartClient(
+	execrpc.ClientOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
+		ClientRawOptions: execrpc.ClientRawOptions{
+			Version: 1,
+			Cmd:     "go",
+			Dir:     "./examples/servers/typed",
+			Args:    []string{"run", "."},
+			Env:     env,
+			Timeout: 30 * time.Second,
+		},
+		Config: model.ExampleConfig{},
+		Codec:  codec,
+	},
 )
 
-func main() {
-	// Define the request, message and receipt types for the RPC call.
-	client, err := execrpc.StartClient(
-		execrpc.ClientOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
-			ClientRawOptions: execrpc.ClientRawOptions{
-				Version: 1,
-				Cmd:     "go",
-				Dir:     "./examples/servers/typed",
-				Args:    []string{"run", "."},
-				Env:     nil,
-				Timeout: 30 * time.Second,
-			},
-			Codec: codecs.JSONCodec{},
-		},
-	)
-	if err != nil {
-		log.Fatal(err)
+if err != nil {
+	log.Fatal(err)
+}
+
+// Consume standalone messages (e.g. log messages) in its own goroutine.
+go func() {
+	for msg := range client.MessagesRaw() {
+		fmt.Println("got message", string(msg.Body))
 	}
+}()
 
-	// Consume standalone messages (e.g. log messages) in its own goroutine.
-	go func() {
-		for msg := range client.MessagesRaw() {
-			fmt.Println("got message", string(msg.Body))
-		}
-	}()
+// Execute the request.
+result := client.Execute(model.ExampleRequest{Text: "world"})
 
-	// Execute the request.
-	result := client.Execute(model.ExampleRequest{Text: "world"})
+// Check for errors.
+if err := result.Err(); err != nil {
+	log.Fatal(err)
+}
 
-	// Check for errors.
-	if err := result.Err(); err != nil {
-		log.Fatal(err)
-	}
+// Consume the messages.
+for m := range result.Messages() {
+	fmt.Println(m)
+}
 
-	// Consume the messages.
-	for m := range result.Messages() {
-		fmt.Println(m)
-	}
+// Wait for the receipt.
+receipt := <-result.Receipt()
 
-	// Wait for the receipt.
-	receipt := <-result.Receipt()
+// Check again for errors.
+if err := result.Err(); err != nil {
+	log.Fatal(err)
+}
 
-	// Check again for errors.
-	if err := result.Err(); err != nil {
-		log.Fatal(err)
-	}
+fmt.Println(receipt.Text)
 
-	fmt.Println(receipt.Text)
+// Close the client.
+if err := client.Close(); err != nil {
+	log.Fatal(err)
 }
 ```
 
@@ -75,19 +69,31 @@ To get the best performance you should keep the client open as long as its neede
 And the server side of the above:
 
 ```go
+
 func main() {
-	getHasher := func() hash.Hash {
-		return fnv.New64a()
-	}
+	log.SetFlags(0)
+	log.SetPrefix("readme-example: ")
+
+	var clientConfig model.ExampleConfig
 
 	server, err := execrpc.NewServer(
-		execrpc.ServerOptions[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
-			// Optional function to get a hasher for the ETag.
-			GetHasher: getHasher,
+		execrpc.ServerOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
+			// Optional function to provide a hasher for the ETag.
+			GetHasher: func() hash.Hash {
+				return fnv.New64a()
+			},
 
 			// Allows you to delay message delivery, and drop
 			// them after reading the receipt (e.g. the ETag matches the ETag seen by client).
 			DelayDelivery: false,
+
+			// Optional function to initialize the server
+			// with the client configuration.
+			// This will be called once on server start.
+			Init: func(cfg model.ExampleConfig) error {
+				clientConfig = cfg
+				return clientConfig.Init()
+			},
 
 			// Handle the incoming call.
 			Handle: func(c *execrpc.Call[model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]) {
@@ -99,7 +105,7 @@ func main() {
 							Version: 32,
 							Status:  150,
 						},
-						Body: []byte("a log message"),
+						Body: []byte("log message"),
 					},
 				)
 
@@ -124,12 +130,13 @@ func main() {
 
 				// ETag provided by the framework.
 				// A hash of all message bodies.
-				fmt.Println("Receipt:", receipt.ETag)
+				// fmt.Println("Receipt:", receipt.ETag)
 
 				// Modify if needed.
 				receipt.Size = uint32(123)
+				receipt.Text = "echoed: " + c.Request.Text
 
-				// Close the message stream.
+				// Close the message stream and send the receipt.
 				// Pass true to drop any queued messages,
 				// this is only relevant if DelayDelivery is enabled.
 				c.Close(false, receipt)
@@ -137,14 +144,18 @@ func main() {
 		},
 	)
 	if err != nil {
-		log.Fatal(err)
+		handleErr(err)
 	}
 
-	// Start the server. This will block.
 	if err := server.Start(); err != nil {
-		log.Fatal(err)
+		handleErr(err)
 	}
 }
+
+func handleErr(err error) {
+	log.Fatalf("error: failed to start typed echo server: %s", err)
+}
+
 ```
 
 ## Generate ETag
