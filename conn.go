@@ -22,7 +22,7 @@ var (
 	ErrTimeoutWaitingForCall = errors.New("timed out waiting for call to complete")
 )
 
-var brokenPipeRe = regexp.MustCompile("Broken pipe|pipe is being closed")
+var brokenPipeRe = regexp.MustCompile("(?i)broken pipe|pipe is being closed")
 
 func newConn(cmd *exec.Cmd, timeout time.Duration) (_ conn, err error) {
 	in, err := cmd.StdinPipe()
