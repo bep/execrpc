@@ -76,7 +76,10 @@ func NewServer[C, Q, M, R any](opts ServerOptions[C, Q, M, R]) (*Server[C, Q, M,
 				return nil
 			}
 
-			var cfg C
+			var (
+				cfg          C
+				protocolInfo = ProtocolInfo{Version: message.Header.Version}
+			)
 			err := opts.Codec.Decode(message.Body, &cfg)
 			if err != nil {
 				m := createErrorMessage(err, message.Header, MessageStatusErrDecodeFailed)
@@ -84,7 +87,7 @@ func NewServer[C, Q, M, R any](opts ServerOptions[C, Q, M, R]) (*Server[C, Q, M,
 				return nil
 			}
 
-			if err := opts.Init(cfg); err != nil {
+			if err := opts.Init(cfg, protocolInfo); err != nil {
 				m := createErrorMessage(err, message.Header, MessageStatusErrInitServerFailed)
 				d.SendMessage(m)
 				return nil
@@ -259,12 +262,20 @@ func createErrorMessage(err error, h Header, failureStatus uint16) Message {
 	return m
 }
 
+// ProtocolInfo is the protocol information passed to the server's Init function.
+type ProtocolInfo struct {
+	// The version passed down from the client.
+	// This usually represents a major version,
+	// so any increment should be considered a breaking change.
+	Version uint16 `json:"version"`
+}
+
 // ServerOptions is the options for a server.
 type ServerOptions[C, Q, M, R any] struct {
 	// Init is the function that will be called when the server is started.
 	// It can be used to initialize the server with the given configuration.
 	// If an error is returned, the server will stop.
-	Init func(C) error
+	Init func(C, ProtocolInfo) error
 
 	// Handle is the function that will be called when a request is received.
 	Handle func(*Call[Q, M, R])

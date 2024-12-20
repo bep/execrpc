@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"log"
@@ -29,7 +30,10 @@ func main() {
 			// Optional function to initialize the server
 			// with the client configuration.
 			// This will be called once on server start.
-			Init: func(cfg model.ExampleConfig) error {
+			Init: func(cfg model.ExampleConfig, procol execrpc.ProtocolInfo) error {
+				if procol.Version != 3 {
+					return fmt.Errorf("unsupported protocol version: %d", procol.Version)
+				}
 				clientConfig = cfg
 				return clientConfig.Init()
 			},
