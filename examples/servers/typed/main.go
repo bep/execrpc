@@ -43,7 +43,10 @@ func main() {
 		execrpc.ServerOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 			GetHasher:     getHasher,
 			DelayDelivery: delayDelivery,
-			Init: func(cfg model.ExampleConfig) error {
+			Init: func(cfg model.ExampleConfig, protocol execrpc.ProtocolInfo) error {
+				if protocol.Version != 3 {
+					return fmt.Errorf("unsupported protocol version: %d", protocol.Version)
+				}
 				clientConfig = cfg
 				return clientConfig.Init()
 			},

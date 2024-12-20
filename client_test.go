@@ -64,11 +64,13 @@ func TestStartFailed(t *testing.T) {
 	c.Assert(client.Close(), qt.IsNil)
 }
 
+const clientVersion = 3
+
 func newTestClientForServer(t testing.TB, server string, codec codecs.Codec, cfg model.ExampleConfig, env ...string) *execrpc.Client[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt] {
 	client, err := execrpc.StartClient(
 		execrpc.ClientOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 			ClientRawOptions: execrpc.ClientRawOptions{
-				Version: 1,
+				Version: clientVersion,
 				Cmd:     "go",
 				Dir:     "./examples/servers/" + server,
 				Args:    []string{"run", "."},
@@ -224,7 +226,7 @@ func TestTyped(t *testing.T) {
 		client, err := execrpc.StartClient(
 			execrpc.ClientOptions[model.ExampleConfig, model.ExampleRequest, model.ExampleMessage, model.ExampleReceipt]{
 				ClientRawOptions: execrpc.ClientRawOptions{
-					Version: 1,
+					Version: clientVersion,
 					Cmd:     "go",
 					Dir:     "./examples/servers/typed",
 					Args:    []string{"run", "."},
