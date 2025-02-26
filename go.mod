@@ -1,6 +1,6 @@
 module github.com/bep/execrpc
 
-go 1.18
+go 1.23
 
 require (
 	github.com/bep/helpers v0.1.0
