@@ -259,7 +259,7 @@ func createErrorMessage(err error, h Header, failureStatus uint16) Message {
 	}
 	m := Message{
 		Header: h,
-		Body:   []byte(fmt.Sprintf("failed create message (error code %d): %s.%s", failureStatus, err, additionalMsg)),
+		Body:   fmt.Appendf(nil, "failed create message (error code %d): %s.%s", failureStatus, err, additionalMsg),
 	}
 	m.Header.Status = failureStatus
 	return m

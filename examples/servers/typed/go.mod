@@ -1,6 +1,6 @@
 module github.com/bep/execrpc/examples/servers/typed
 
-go 1.21
+go 1.23
 
 require github.com/bep/execrpc v0.3.0
 

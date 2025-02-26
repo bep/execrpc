@@ -334,10 +334,10 @@ func TestTypedConcurrent(t *testing.T) {
 	client := newTestClient(t, codecs.JSONCodec{}, model.ExampleConfig{})
 	var g errgroup.Group
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		i := i
 		g.Go(func() error {
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				text := fmt.Sprintf("%d-%d", i, j)
 				result := client.Execute(model.ExampleRequest{Text: text})
 				if err := result.Err(); err != nil {
