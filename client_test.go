@@ -335,7 +335,6 @@ func TestTypedConcurrent(t *testing.T) {
 	var g errgroup.Group
 
 	for i := range 100 {
-		i := i
 		g.Go(func() error {
 			for j := range 10 {
 				text := fmt.Sprintf("%d-%d", i, j)
